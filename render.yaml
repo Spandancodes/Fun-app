@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: thanisha-its-done-bro
+    runtime: docker
+    plan: free
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ORIGIN
+        value: https://itsdonebro.spandanghosal.in
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: SESSION_HOURS
+        value: "168"
+      - key: MAIL_MODE
+        value: resend
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SIGNING_SECRET
+        sync: false
+      - key: OWNER_EMAIL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false

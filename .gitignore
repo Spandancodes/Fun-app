@@ -1,0 +1,25 @@
+node_modules/
+.next/
+.venv/
+__pycache__/
+.pytest_cache/
+*.sqlite3*
+.env
+.env.local
+playwright-report/
+test-results/
+frontend/public/audio/*.mp3
+!frontend/public/audio/login_right.mp3
+!frontend/public/audio/no_third_alarm.mp3
+frontend/public/upi-scanner.jpeg
+frontend/out/
+frontend/tmp/
+frontend/.env*
+backend/.env*
+backend/*.sqlite3*
+*.mpeg
+*.mpeg3
+UPI scanner.jpeg
+.DS_Store
+*.tsbuildinfo
+.venv/

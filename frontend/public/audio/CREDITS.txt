@@ -1,0 +1,18 @@
+Audio credits
+
+"Yeah Boy" by mokasza — CC BY 4.0
+https://freesound.org/people/mokasza/sounds/810190/
+https://creativecommons.org/licenses/by/4.0/
+Source describes this as AI-generated using ElevenLabs, not a real-world recording.
+Adapted: normalized to -18 LUFS and encoded as 44.1 kHz stereo MP3.
+Used for login success and the Yes celebration.
+
+"Urgent Vault Alarm Bell" by BudgetPixel AI — CC BY 4.0
+https://budgetpixel.com/sfx/urgent-vault-alarm-bell-be3b7008
+https://budgetpixel.com/audio-license
+https://creativecommons.org/licenses/by/4.0/
+Source describes this as AI-generated.
+Adapted: shortened to 3.2 seconds, normalized to -20 LUFS, faded out,
+and encoded as 44.1 kHz stereo MP3.
+
+Neither creator sponsors or endorses this invitation.

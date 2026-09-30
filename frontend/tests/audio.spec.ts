@@ -3,9 +3,8 @@ import { startGame, steer } from "./helpers";
 
 test("first two NO catches play the supplied clip; third plays only the alarm", async ({ page, request }) => {
   const response = await request.get("/audio/no_first.mp3");
-  // This user-provided meme clip is intentionally omitted from distributable builds
-  // until redistribution permission is confirmed.
-  expect([200, 404]).toContain(response.status());
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toContain("audio/mpeg");
   const alarmResponse = await request.get("/audio/no_third_alarm.mp3");
   expect(alarmResponse.status()).toBe(200);
   await page.addInitScript(() => {

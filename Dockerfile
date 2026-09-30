@@ -3,16 +3,8 @@ WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
-# Build from a distribution-safe public directory. User uploads with unclear
-# redistribution rights and the real UPI payment image never enter the image.
-RUN mkdir -p /tmp/distribution-safe/public/audio && \
-    cp -R public/. /tmp/distribution-safe/public/ && \
-    rm -f /tmp/distribution-safe/public/upi-scanner.jpeg \
-      /tmp/distribution-safe/public/audio/login_wrong.mp3 \
-      /tmp/distribution-safe/public/audio/no_first.mp3 \
-      /tmp/distribution-safe/public/audio/yes_date_song.mp3 && \
-    find /tmp/distribution-safe/public/audio -type f \( -name '*.mpeg' -o -name '*.mpeg3' \) -delete && \
-    rm -rf public && cp -R /tmp/distribution-safe/public ./public
+# Authorized audio is versioned in public/audio and checked before and after export.
+# The real UPI scanner remains excluded by .dockerignore.
 ENV STATIC_EXPORT=true
 RUN npm run build
 

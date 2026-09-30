@@ -14,9 +14,7 @@ frontend/test-results
 frontend/playwright-report
 frontend/out
 frontend/public/upi-scanner.jpeg
-frontend/public/audio/login_wrong.mp3
-frontend/public/audio/no_first.mp3
-frontend/public/audio/yes_date_song.mp3
+frontend/tmp
 frontend/public/audio/*.mpeg
 *.mpeg
 *.mpeg3

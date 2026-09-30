@@ -39,7 +39,7 @@ The service configuration is in `render.yaml`. `APP_ORIGIN` is set to the custom
 
 ## Audio
 
-See [AUDIO_SOURCES.md](AUDIO_SOURCES.md). The alarm clip is included. The supplied NO reaction clip is omitted from distributed builds pending permission to host it. Locally, YES plays the uploaded WhatsApp recording at `/audio/yes_date_song.mp3`, with pause and volume controls. The existing public-distribution filter excludes this recording until hosting permission is confirmed. Missing audio never blocks the game, and no external music link or substitute is used.
+See [AUDIO_SOURCES.md](AUDIO_SOURCES.md). The owner confirmed public hosting permission for the uploaded recordings. All five MP3s are included in Git and Docker. YES plays `/audio/yes_date_song.mp3` with pause and volume controls. Build checks verify exact SHA-256 hashes before compilation and after static export; missing or changed audio fails the build. No external music link or substitute is used.
 
 ## Verification
 

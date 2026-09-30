@@ -1,26 +1,12 @@
-Static audio for the invitation. Browser URLs start with /audio/.
+# Audio
 
-Installed:
-- no_first.mp3: owner-supplied Lawde Bhojyam recording, played for every NO catch.
-- yes_date_song.mp3: owner-supplied WhatsApp recording, played when YES is reached.
+Public hosting permission for the uploads was confirmed by the owner on 2026-09-30.
+All five MP3s are included in Git and Docker and checked by SHA-256 during builds.
 
-Retained but not played by the direct game:
-- login_right.mp3 and login_wrong.mp3: former sign-in clips.
-- no_third_alarm.mp3: plays on opening the optional third-NO UPI prompt.
+- First and second NO: no_first.mp3 (Lawde Bhojyam).
+- Third NO: no_third_alarm.mp3 (bank alarm).
+- YES: yes_date_song.mp3 (uploaded WhatsApp recording).
+- Archived sign-in: login_right.mp3 and login_wrong.mp3; unused by the direct game.
 
-There are no substitute sounds. Each event points only to its intended file; if
-that file is absent, the event is silent and the development console identifies
-the missing path.
-
-No unrelated sound is played for YES.
-
-See root AUDIO_SOURCES.md for sources, licenses, and current inventory.
-Public attribution is in CREDITS.txt. No silent placeholders are included.
-# Audio packaging
-
-Only `login_right.mp3` and `no_third_alarm.mp3` are currently distributable;
-their attribution is in `CREDITS.txt`. User-supplied `login_wrong.mp3`,
-`no_first.mp3`, and `yes_date_song.mp3` are intentionally omitted from source
-control and production packaging until hosting/redistribution permission is
-confirmed. The app stays silent for absent exact clips and logs the missing
-path in browser developer output.
+Missing files never trigger a replacement sound. See CREDITS.txt for attribution
+and the repository AUDIO_SOURCES.md for packaging information.

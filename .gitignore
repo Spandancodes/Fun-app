@@ -14,7 +14,7 @@ frontend/public/audio/*.mp3
 # !frontend/public/audio/no_first.mp3
 # !frontend/public/audio/login_wrong.mp3
 # !frontend/public/audio/yes_date_song.mp3
-frontend/public/upi-scanner.jpeg
+# frontend/public/upi-scanner.jpeg
 frontend/out/
 frontend/tmp/
 frontend/.env*

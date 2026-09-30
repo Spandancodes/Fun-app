@@ -1,20 +1,13 @@
 # Production audio inventory
 
-The deployment includes only assets with an identified redistribution license.
-When a referenced exact clip is absent, the event stays silent and the browser
-console identifies the missing path. No audio substitute is used.
+The game opens without sign-in. No login audio plays. Only clips with identified redistribution rights are included in the distributable image. Missing clips are reported in the browser console; the game continues without substitute sound.
 
 | Event | Browser path | Production status |
 | --- | --- | --- |
-| Correct sign-in, after link verification | `/audio/login_right.mp3` | Included; attribution and CC BY 4.0 source in `frontend/public/audio/CREDITS.txt`. |
-| Wrong sign-in | `/audio/login_wrong.mp3` | Not included: user-provided meme audio; redistribution permission is unconfirmed. |
-| First and second NO | `/audio/no_first.mp3` | Not included: user-provided “Lavde me bhojyam.mpeg”; redistribution permission is unconfirmed. |
-| Third NO | `/audio/no_third_alarm.mp3` | Included; attribution and CC BY 4.0 source in `frontend/public/audio/CREDITS.txt`. |
-| YES | Official player link to Rihanna, “Don’t Stop the Music” | No track file redistributed. |
+| First and second NO | `/audio/no_first.mp3` | Omitted pending redistribution permission for the supplied clip. |
+| Third NO | `/audio/no_third_alarm.mp3` | Included; source and license in `frontend/public/audio/CREDITS.txt`. |
+| YES | `/audio/yes_date_song.mp3` | Local copy of the uploaded `WhatsApp Audio 2026-09-30 at 00.25.05.mpeg`; starts on YES with pause and volume controls. The existing public-distribution filter still excludes this recording. |
 
-To include the omitted clips, supply a copy that you are authorized to host and
-confirm redistribution rights. Install them respectively as
-`frontend/public/audio/login_wrong.mp3` and `frontend/public/audio/no_first.mp3`.
-Do not include the user-uploaded WhatsApp music recording without permission;
-the app does not play it. The fake assessment graphic is non-scannable and
-cannot initiate or accept payment.
+The YES copy is byte-for-byte identical to the supplied file (SHA-256 `ff6b1dbf15edf57bb4475fe0e796baca04c59432b92a28f8b588af4f01df0ac0`). There is no YouTube link or substitute music. Missing music produces a developer-console warning and leaves the celebration usable.
+
+To add the omitted NO clip, provide an authorized MP3 copy at `frontend/public/audio/no_first.mp3` and update the Dockerfile’s distribution filter once redistribution is permitted. The fake assessment graphic is non-scannable and cannot accept payment.

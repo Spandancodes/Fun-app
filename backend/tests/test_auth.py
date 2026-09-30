@@ -74,8 +74,8 @@ def test_email_link_is_private_short_lived_and_one_use(client):
     ].endswith("?link=invalid")
 
 
-def test_plan_uses_session_recipients_and_is_idempotent(client):
-    verify_link(client)
+def test_plan_is_public_owner_only_and_idempotent(client):
+    assert client.get("/api/session").status_code == 401
     draft = {
         "id": str(uuid.uuid4()),
         "when": "Saturday afternoon",
@@ -98,16 +98,13 @@ def test_plan_uses_session_recipients_and_is_idempotent(client):
             "SELECT recipients,body FROM outbox WHERE subject LIKE 'A date plan%'"
         ).fetchall()
     assert len(mail) == 1
-    assert json.loads(mail[0]["recipients"]) == [
-        "guest@example.test",
-        "spandan@example.test",
-    ]
+    assert json.loads(mail[0]["recipients"]) == ["spandan@example.test"]
     assert "Saturday afternoon" in mail[0]["body"]
     assert "Somewhere quiet" in mail[0]["body"]
 
 
 def test_plan_failure_keeps_retry_available_and_rate_limit(client, monkeypatch):
-    verify_link(client)
+    assert client.get("/api/session").status_code == 401
     draft = {"id": str(uuid.uuid4()), "when": "Friday", "area": "Park",
              "outing": "Walk", "note": ""}
     monkeypatch.delenv("OWNER_EMAIL")
@@ -124,7 +121,7 @@ def test_plan_failure_keeps_retry_available_and_rate_limit(client, monkeypatch):
 
 
 def test_resend_acceptance_and_idempotency_key(client, monkeypatch):
-    verify_link(client)
+    assert client.get("/api/session").status_code == 401
     monkeypatch.setenv("MAIL_MODE", "resend")
     monkeypatch.setenv("RESEND_API_KEY", "test-key")
     monkeypatch.setenv("MAIL_FROM", "Invite <invite@example.test>")
@@ -149,9 +146,7 @@ def test_resend_acceptance_and_idempotency_key(client, monkeypatch):
     assert len(calls) == 1
     assert calls[0][0] == "https://api.resend.com/emails"
     assert calls[0][1]["headers"]["Idempotency-Key"] == f"plan/{draft['id']}"
-    assert calls[0][1]["json"]["to"] == [
-        "guest@example.test", "spandan@example.test"
-    ]
+    assert calls[0][1]["json"]["to"] == ["spandan@example.test"]
 
 
 def test_existing_password_database_migrates_without_losing_guest(tmp_path, monkeypatch):

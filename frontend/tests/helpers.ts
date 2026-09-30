@@ -1,11 +1,6 @@
 import { expect, Page } from "@playwright/test";
 
 export async function startGame(page: Page) {
-  await page.route("**/api/session", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({ display_name: "Test Guest" }),
-  }));
   await page.goto("/");
   await expect(
     page.getByRole("heading", { name: "Thanisha its done bro" }),

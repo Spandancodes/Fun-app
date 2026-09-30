@@ -5,7 +5,6 @@ import { AudioController } from "@/lib/audio";
 import { advance, Direction, Game, newGame, SIZE } from "@/lib/game";
 
 type Screen = "board" | "yes" | "exit";
-type AuthState = "checking" | "signed-out" | "signed-in";
 type Booking = {
   date: string;
   time: string;
@@ -13,25 +12,24 @@ type Booking = {
   outing: string;
   note: string;
 };
-const RIHANNA_URL = "https://www.youtube.com/watch?v=yd8jh9QYfEs";
+const YES_SONG = "/audio/yes_date_song.mp3";
 const EXIT_ALARM = "/audio/no_third_alarm.mp3";
 const INSTAGRAM_URL = "https://www.instagram.com/_.avalanche.who";
 
 export default function Home() {
   const [muted, setMuted] = useState(false);
-  const [authState, setAuthState] = useState<AuthState>("checking");
-  const [guestName, setGuestName] = useState("");
-  const [loginName, setLoginName] = useState("");
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginSending, setLoginSending] = useState(false);
-  const [loginMessage, setLoginMessage] = useState("");
+  const [songPlaying, setSongPlaying] = useState(false);
+  const [songVolume, setSongVolume] = useState(0.65);
+  const songRef = useRef<HTMLAudioElement>(null);
   const [screen, setScreen] = useState<Screen>("board");
   const [game, setGame] = useState<Game>(newGame);
   const [recount, setRecount] = useState(false);
   const [assessment, setAssessment] = useState(false);
   const [alarmNeedsGesture, setAlarmNeedsGesture] = useState(false);
   const [bookingSending, setBookingSending] = useState(false);
-  const [bookingSent, setBookingSent] = useState<"local" | "resend" | null>(null);
+  const [bookingSent, setBookingSent] = useState<"local" | "resend" | null>(
+    null,
+  );
   const [reviewingPlan, setReviewingPlan] = useState(false);
   const [bookingError, setBookingError] = useState("");
   const [booking, setBooking] = useState<Booking>({
@@ -60,6 +58,7 @@ export default function Home() {
     controller.setMuted(preference);
     const stop = () => {
       audio.current?.stop();
+      songRef.current?.pause();
       if (exitAlarmTimer.current) clearTimeout(exitAlarmTimer.current);
       if (exitAlarmRef.current) {
         exitAlarmRef.current.pause();
@@ -72,42 +71,12 @@ export default function Home() {
     window.addEventListener("pagehide", stop);
     document.addEventListener("visibilitychange", visibility);
     return () => {
+      stop();
       if (recountTimer.current) clearTimeout(recountTimer.current);
       if (exitAlarmTimer.current) clearTimeout(exitAlarmTimer.current);
       controller.dispose();
       window.removeEventListener("pagehide", stop);
       document.removeEventListener("visibilitychange", visibility);
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    const query = new URLSearchParams(window.location.search);
-    const verifiedLink = query.get("link") === "verified";
-    fetch("/api/session", { credentials: "same-origin" })
-      .then(async (response) => {
-        if (!active) return;
-        if (!response.ok) {
-          setAuthState("signed-out");
-          if (query.get("link") === "invalid")
-            setLoginMessage("That sign-in link is invalid, expired, or already used.");
-          return;
-        }
-        const result: { display_name: string } = await response.json();
-        if (!active) return;
-        setGuestName(result.display_name);
-        setAuthState("signed-in");
-        if (verifiedLink) void audio.current?.play("login_right");
-        if (query.has("link")) window.history.replaceState({}, "", "/");
-      })
-      .catch(() => {
-        if (active) {
-          setAuthState("signed-out");
-          setLoginMessage("Sign-in service is temporarily unavailable. Please retry.");
-        }
-      });
-    return () => {
-      active = false;
     };
   }, []);
 
@@ -146,6 +115,7 @@ export default function Home() {
     const next = !muted;
     setMuted(next);
     audio.current?.setMuted(next);
+    if (next) songRef.current?.pause();
     if (next && exitAlarmRef.current) {
       exitAlarmRef.current.pause();
       exitAlarmRef.current.currentTime = 0;
@@ -153,37 +123,12 @@ export default function Home() {
     localStorage.setItem("bro-muted", String(next));
   }
 
-  async function requestSignIn(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (loginSending) return;
-    setLoginSending(true);
-    setLoginMessage("");
-    try {
-      const response = await fetch("/api/login", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: loginName, email: loginEmail }),
-      });
-      if (!response.ok) throw new Error("request failed");
-      setLoginMessage("If the invitation matches, a short-lived sign-in link will arrive by email.");
-    } catch {
-      setLoginMessage("The sign-in request could not be sent. Please try again shortly.");
-    } finally {
-      setLoginSending(false);
-    }
-  }
-
-  async function signOut() {
-    audio.current?.stop();
-    await fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
-    setGuestName("");
-    setAuthState("signed-out");
-    setScreen("board");
-  }
-
   function restartGame() {
     audio.current?.stop();
+    if (songRef.current) {
+      songRef.current.pause();
+      songRef.current.currentTime = 0;
+    }
     setScreen("board");
     const fresh = newGame();
     gameRef.current = fresh;
@@ -224,15 +169,18 @@ export default function Home() {
     alarm.currentTime = 0;
     alarm.volume = 1;
     setAlarmNeedsGesture(false);
-    void alarm.play().then(() => {
-      exitAlarmTimer.current = setTimeout(() => {
-        alarm.pause();
-        alarm.currentTime = 0;
-      }, 3500);
-    }).catch(() => {
-      setAlarmNeedsGesture(true);
-      console.warn("Browser blocked exit alarm playback: " + EXIT_ALARM);
-    });
+    void alarm
+      .play()
+      .then(() => {
+        exitAlarmTimer.current = setTimeout(() => {
+          alarm.pause();
+          alarm.currentTime = 0;
+        }, 3500);
+      })
+      .catch(() => {
+        setAlarmNeedsGesture(true);
+        console.warn("Browser blocked exit alarm playback: " + EXIT_ALARM);
+      });
   }
 
   function startAssessment() {
@@ -240,14 +188,30 @@ export default function Home() {
     playAssessmentAlarm();
   }
 
+  function playSong() {
+    const song = songRef.current;
+    if (!song || muted) return;
+    audio.current?.stop();
+    song.volume = songVolume;
+    void song.play().catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      console.warn(
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Browser blocked YES music; use Play music."
+          : "Missing or unreadable YES music: " + YES_SONG,
+      );
+    });
+  }
+
   function move(direction: Direction) {
-    if (authState !== "signed-in" || screen !== "board" || assessment) return;
+    if (screen !== "board" || assessment) return;
     const result = advance(gameRef.current, direction);
     if (result.game === gameRef.current) return;
     gameRef.current = result.game;
     setGame(result.game);
     if (result.catch === "yes") {
       audio.current?.stop();
+      playSong();
       setScreen("yes");
     } else if (result.catch === "no") {
       if (result.game.noCount < 3) {
@@ -360,50 +324,10 @@ export default function Home() {
           >
             {muted ? "Sound off" : "Sound on"}
           </button>
-          {authState === "signed-in" && (
-            <button className="plain-button" onClick={signOut}>Sign out</button>
-          )}
         </div>
       </header>
 
-      {authState === "checking" ? (
-        <main className="card loading" role="status">Checking invitation…</main>
-      ) : authState === "signed-out" ? (
-        <main className="card sign-in">
-          <section className="sign-in-copy">
-            <span className="eyebrow">PRIVATE INVITATION · FILE 001</span>
-            <h1>Thanisha,<br />it’s done bro.</h1>
-            <p>Enter your invited name and email. We’ll send a short-lived sign-in link.</p>
-            <div className="seal">EMAIL VERIFIED<br />BEFORE ENTRY</div>
-          </section>
-          <form className="sign-in-form" onSubmit={requestSignIn}>
-            <h2>Open your invitation</h2>
-            <label htmlFor="login-name">Name</label>
-            <input
-              id="login-name"
-              autoComplete="name"
-              required
-              maxLength={80}
-              value={loginName}
-              onChange={(event) => setLoginName(event.target.value)}
-            />
-            <label htmlFor="login-email">Email</label>
-            <input
-              id="login-email"
-              type="email"
-              autoComplete="email"
-              required
-              maxLength={254}
-              value={loginEmail}
-              onChange={(event) => setLoginEmail(event.target.value)}
-            />
-            <button className="action-button" disabled={loginSending}>
-              {loginSending ? "Sending link…" : "Email me a sign-in link"}
-            </button>
-            <p className="form-message" role="status" aria-live="polite">{loginMessage}</p>
-          </form>
-        </main>
-      ) : screen === "board" ? (
+      {screen === "board" ? (
         <main
           className={"card arcade " + (game.noCount >= 2 ? "escalated" : "")}
         >
@@ -476,11 +400,7 @@ export default function Home() {
                       .join(" ")}
                     data-cell={`${x},${y}`}
                   >
-                    {yes ? (
-                      "YES"
-                    ) : no ? (
-                      "NO"
-                    ) : null}
+                    {yes ? "YES" : no ? "NO" : null}
                   </div>
                 );
               })}
@@ -504,11 +424,14 @@ export default function Home() {
                 <path className="snake-tail" d={tailPath} />
                 <path className="snake-outline" d={snakePath} />
                 <path className="snake-body-path" d={snakePath} />
-                {snakeTrail.slice(1, -1).map((point) => {
+                {snakeTrail.slice(1, -1).map((point, index) => {
                   const x = point.x * 100 + 50;
                   const y = point.y * 100 + 50;
                   return (
-                    <g className="snake-scales" key={`${point.x},${point.y}`}>
+                    <g
+                      className="snake-scales"
+                      key={`${point.x},${point.y}-${index}`}
+                    >
                       <ellipse cx={x - 13} cy={y - 9} rx="6" ry="4" />
                       <ellipse cx={x + 13} cy={y + 9} rx="6" ry="4" />
                     </g>
@@ -518,20 +441,56 @@ export default function Home() {
                   className="snake-head-art"
                   transform={`translate(${headX} ${headY}) rotate(${facingAngle})`}
                 >
-                  <ellipse className="snake-face" cx="0" cy="0" rx="37" ry="31" />
-                  <ellipse className="snake-eye-white" cx="14" cy="-13" rx="7.5" ry="7" />
-                  <ellipse className="snake-eye-white" cx="14" cy="13" rx="7.5" ry="7" />
-                  <ellipse className="snake-pupil" cx="17" cy="-13" rx="3" ry="4" />
-                  <ellipse className="snake-pupil" cx="17" cy="13" rx="3" ry="4" />
+                  <ellipse
+                    className="snake-face"
+                    cx="0"
+                    cy="0"
+                    rx="37"
+                    ry="31"
+                  />
+                  <ellipse
+                    className="snake-eye-white"
+                    cx="14"
+                    cy="-13"
+                    rx="7.5"
+                    ry="7"
+                  />
+                  <ellipse
+                    className="snake-eye-white"
+                    cx="14"
+                    cy="13"
+                    rx="7.5"
+                    ry="7"
+                  />
+                  <ellipse
+                    className="snake-pupil"
+                    cx="17"
+                    cy="-13"
+                    rx="3"
+                    ry="4"
+                  />
+                  <ellipse
+                    className="snake-pupil"
+                    cx="17"
+                    cy="13"
+                    rx="3"
+                    ry="4"
+                  />
                   <circle className="snake-nostril" cx="30" cy="-5" r="2" />
                   <circle className="snake-nostril" cx="30" cy="5" r="2" />
-                  <path className="snake-tongue" d="M 34 0 L 48 0 M 48 0 L 56 -6 M 48 0 L 56 6" />
+                  <path
+                    className="snake-tongue"
+                    d="M 34 0 L 48 0 M 48 0 L 56 -6 M 48 0 L 56 6"
+                  />
                 </g>
               </svg>
             </div>
             {recount && (
               <div className="recount-stamp" role="status">
-                <img src="/images/netanyahu.jpg" alt="Benjamin Netanyahu reaction portrait" />
+                <img
+                  src="/images/netanyahu.jpg"
+                  alt="Benjamin Netanyahu reaction portrait"
+                />
                 <strong>RECOUNT!</strong>
                 <small>NO relocated by committee</small>
               </div>
@@ -585,10 +544,21 @@ export default function Home() {
           <p>You caught YES. The committee is delighted.</p>
           <div className="song-box">
             <p>Your YES song</p>
-            <a className="action-button" href={RIHANNA_URL} target="_blank" rel="noopener noreferrer">
-              Play “Don’t Stop the Music” on YouTube ↗
-            </a>
-            <small>Opens Rihanna’s official music video; playback is controlled by YouTube.</small>
+            <button
+              className="action-button"
+              onClick={() => songPlaying ? songRef.current?.pause() : playSong()}
+              disabled={muted}
+            >
+              {songPlaying ? "Pause music" : "Play music"}
+            </button>
+            <label htmlFor="song-volume">Music volume</label>
+            <input id="song-volume" type="range" min="0" max="1" step="0.05"
+              value={songVolume} onChange={(event) => {
+                const volume = Number(event.target.value);
+                setSongVolume(volume);
+                if (songRef.current) songRef.current.volume = volume;
+              }} />
+            {muted && <small>Turn sound on to play music.</small>}
           </div>
           <a
             className="action-button instagram-link"
@@ -604,25 +574,50 @@ export default function Home() {
               <p className="booking-success" role="status">
                 {bookingSent === "local"
                   ? "Saved in the local development outbox; no email has been sent."
-                  : "Your plan email was accepted for delivery to both addresses. This is not a confirmed calendar booking."}
+                  : "Your plan email was accepted for delivery to Spandan. This is not a confirmed calendar booking."}
               </p>
             ) : reviewingPlan ? (
-              <section className="plan-review" aria-label="Review your date plan">
-                <p>Hi {guestName || "there"} — here’s the plan for review:</p>
+              <section
+                className="plan-review"
+                aria-label="Review your date plan"
+              >
+                <p>Hi Thanisha — here’s the plan for review:</p>
                 <dl>
-                  <dt>Preferred date and time</dt><dd>{booking.date} · {booking.time}</dd>
-                  <dt>Area or location</dt><dd>{booking.area}</dd>
-                  <dt>Outing</dt><dd>{booking.outing}</dd>
-                  <dt>Note</dt><dd>{booking.note || "None"}</dd>
+                  <dt>Preferred date and time</dt>
+                  <dd>
+                    {booking.date} · {booking.time}
+                  </dd>
+                  <dt>Area or location</dt>
+                  <dd>{booking.area}</dd>
+                  <dt>Outing</dt>
+                  <dd>{booking.outing}</dd>
+                  <dt>Note</dt>
+                  <dd>{booking.note || "None"}</dd>
                 </dl>
-                <p className="booking-disclaimer">When you press Send our plan, it will go to your verified sign-in email and the organizer. Nothing has been sent yet.</p>
+                <p className="booking-disclaimer">
+                  When you press Send our plan, it will go to Spandan. Nothing
+                  has been sent yet.
+                </p>
                 <div className="overlay-actions">
-                  <button className="secondary-button" onClick={() => setReviewingPlan(false)}>Edit plan</button>
-                  <button className="action-button" disabled={bookingSending} onClick={submitPlan}>
+                  <button
+                    className="secondary-button"
+                    onClick={() => setReviewingPlan(false)}
+                  >
+                    Edit plan
+                  </button>
+                  <button
+                    className="action-button"
+                    disabled={bookingSending}
+                    onClick={submitPlan}
+                  >
                     {bookingSending ? "Sending plan…" : "Send our plan"}
                   </button>
                 </div>
-                {bookingError && <p className="error" role="alert">{bookingError}</p>}
+                {bookingError && (
+                  <p className="error" role="alert">
+                    {bookingError}
+                  </p>
+                )}
               </section>
             ) : (
               <form onSubmit={reviewBooking}>
@@ -634,7 +629,9 @@ export default function Home() {
                       type="date"
                       required
                       value={booking.date}
-                      onChange={(event) => updateBooking({ date: event.target.value })}
+                      onChange={(event) =>
+                        updateBooking({ date: event.target.value })
+                      }
                     />
                   </div>
                   <div>
@@ -644,7 +641,9 @@ export default function Home() {
                       type="time"
                       required
                       value={booking.time}
-                      onChange={(event) => updateBooking({ time: event.target.value })}
+                      onChange={(event) =>
+                        updateBooking({ time: event.target.value })
+                      }
                     />
                   </div>
                 </div>
@@ -654,13 +653,17 @@ export default function Home() {
                   maxLength={100}
                   required
                   value={booking.area}
-                  onChange={(event) => updateBooking({ area: event.target.value })}
+                  onChange={(event) =>
+                    updateBooking({ area: event.target.value })
+                  }
                 />
                 <label htmlFor="booking-outing">Type of outing</label>
                 <select
                   id="booking-outing"
                   value={booking.outing}
-                  onChange={(event) => updateBooking({ outing: event.target.value })}
+                  onChange={(event) =>
+                    updateBooking({ outing: event.target.value })
+                  }
                 >
                   <option>Coffee</option>
                   <option>Walk</option>
@@ -672,14 +675,15 @@ export default function Home() {
                   id="booking-note"
                   maxLength={500}
                   value={booking.note}
-                  onChange={(event) => updateBooking({ note: event.target.value })}
+                  onChange={(event) =>
+                    updateBooking({ note: event.target.value })
+                  }
                 />
                 <p className="booking-disclaimer">
-                  Your verified email is added automatically. This is a date request, not a confirmed calendar booking.
+                  Your plan goes to Spandan only after you review and send it.
+                  This is a date request, not a confirmed booking.
                 </p>
-                <button className="action-button">
-                  Review our plan
-                </button>
+                <button className="action-button">Review our plan</button>
               </form>
             )}
           </section>
@@ -708,6 +712,10 @@ export default function Home() {
         </main>
       )}
 
+      <audio ref={songRef} src={YES_SONG} preload="none" muted={muted}
+        onPlay={() => setSongPlaying(true)} onPause={() => setSongPlaying(false)}
+        onEnded={() => setSongPlaying(false)}
+        onError={() => console.warn("Missing or unreadable YES music: " + YES_SONG)} />
       <footer className="footer">
         A FICTIONAL ELECTION OFFICE · NO GOVERNMENT SERVICE · NO PAYMENT
         REQUIRED
@@ -735,9 +743,15 @@ export default function Home() {
           <br />
           ASSESSMENT
         </h2>
-        <p>The fictional office has produced its most ridiculous form: a fake ₹500 UPI assessment. No payment is requested or possible.</p>
+        <p>
+          The fictional office has produced its most ridiculous form: a fake
+          ₹500 UPI assessment. No payment is requested or possible.
+        </p>
         <figure className="no-reaction-card">
-          <img src="/images/netanyahu.jpg" alt="Benjamin Netanyahu reaction portrait" />
+          <img
+            src="/images/netanyahu.jpg"
+            alt="Benjamin Netanyahu reaction portrait"
+          />
           <figcaption>NO FILED · REACTION DESK</figcaption>
         </figure>
         <div className="scanner-stage scanner-flash">
@@ -748,7 +762,8 @@ export default function Home() {
           />
         </div>
         <p className="payment-disclaimer">
-          Nothing is charged. The vault alarm plays briefly; Exit for free is always available.
+          Nothing is charged. The vault alarm plays briefly; Exit for free is
+          always available.
         </p>
         {alarmNeedsGesture && (
           <button className="secondary-button" onClick={playAssessmentAlarm}>
@@ -756,11 +771,7 @@ export default function Home() {
           </button>
         )}
         <div className="overlay-actions">
-          <button
-            className="action-button"
-            autoFocus
-            onClick={exitForFree}
-          >
+          <button className="action-button" autoFocus onClick={exitForFree}>
             Exit for free
           </button>
           <button className="secondary-button" onClick={closeAssessment}>

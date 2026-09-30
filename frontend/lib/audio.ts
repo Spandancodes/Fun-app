@@ -1,6 +1,4 @@
 export const AUDIO = {
-  login_right: "/audio/login_right.mp3",
-  login_wrong: "/audio/login_wrong.mp3",
   no_first: "/audio/no_first.mp3",
 } as const;
 export type Slot = keyof typeof AUDIO;

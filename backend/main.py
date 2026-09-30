@@ -440,27 +440,25 @@ def send_plan(body: PlanRequest, request: Request):
         owner_email = normalize_email(owner_email)
     except ValueError:
         raise HTTPException(503, "Plan email is not configured") from None
+    now = time.time()
+    requester_key = token_hash(request.client.host if request.client else "local")
+    content = {"when": body.when, "area": body.area,
+               "outing": body.outing, "note": body.note}
+    digest = token_hash(json.dumps(content, sort_keys=True))
     with db() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        guest = session_guest(conn, request)
-        content = {"when": body.when, "area": body.area,
-                   "outing": body.outing, "note": body.note}
-        digest = token_hash(json.dumps(content, sort_keys=True))
-        existing = conn.execute("SELECT * FROM plans WHERE id=?", (body.id,)).fetchone()
+        existing = conn.execute("SELECT * FROM date_bookings WHERE id=?", (body.id,)).fetchone()
         if existing:
-            if existing["guest_id"] != guest["id"] or existing["payload_digest"] != digest:
+            if existing["requester_key"] != requester_key or existing["payload_digest"] != digest:
                 raise HTTPException(409, "This submission ID belongs to another draft")
             return {"sent": True, "delivery": existing["delivery_mode"]}
-        count = conn.execute(
-            "SELECT COUNT(*) AS count FROM plans WHERE guest_id=? AND created>?",
-            (guest["id"], time.time() - 86400),
-        ).fetchone()["count"]
-        if count >= 3:
+        conn.execute("DELETE FROM booking_rate_limits WHERE expires < ?", (now,))
+        attempt = conn.execute("SELECT count FROM booking_rate_limits WHERE key=?", (requester_key,)).fetchone()
+        if attempt and attempt["count"] >= 3:
             raise HTTPException(429, "Plan limit reached for today")
-        subject = f"A date plan from {guest['display_name']}"
         message = (
             "THE GREAT NO CHASE — DATE PLAN\n\n"
-            f"From: {guest['display_name']}\n"
+            "From: Thanisha\n"
             f"Preferred day or time: {body.when}\n"
             f"Area or location: {body.area}\n"
             f"Type of outing: {body.outing}\n"
@@ -468,14 +466,19 @@ def send_plan(body: PlanRequest, request: Request):
             "Sent after the guest reviewed and submitted this plan."
         )
         try:
-            provider_id = send_email(conn, [guest["email"], owner_email], subject,
+            provider_id = send_email(conn, [owner_email], "A date plan from Thanisha",
                                      message, f"plan/{body.id}")
         except Exception as exc:
             print(f"Plan email was not accepted: {type(exc).__name__}", flush=True)
             raise HTTPException(503, "Could not send the plan. Please retry.") from None
         delivery_mode = os.getenv("MAIL_MODE", "local").lower()
-        conn.execute("INSERT INTO plans VALUES (?,?,?,?,?,?)",
-                     (body.id, guest["id"], digest, provider_id, time.time(), delivery_mode))
+        conn.execute("INSERT INTO date_bookings VALUES (?,?,?,?,?,?)",
+                     (body.id, digest, provider_id, delivery_mode, requester_key, now))
+        conn.execute(
+            "INSERT INTO booking_rate_limits(key,count,expires) VALUES (?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET count=booking_rate_limits.count+1",
+            (requester_key, 1, now + 86400),
+        )
     return {"sent": True, "delivery": delivery_mode}
 
 

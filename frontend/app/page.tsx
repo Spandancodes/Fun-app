@@ -757,7 +757,7 @@ export default function Home() {
         <div className="scanner-stage scanner-flash">
           <img
             className="scanner-image"
-            src="/upi-scanner-joke.png"
+            src="/upi-scanner-joke.jpg"
             alt="Non-scannable joke graphic marked zero rupees and nothing charged"
           />
         </div>

@@ -9,11 +9,11 @@ __pycache__/
 playwright-report/
 test-results/
 frontend/public/audio/*.mp3
-!frontend/public/audio/login_right.mp3
-!frontend/public/audio/no_third_alarm.mp3
-!frontend/public/audio/no_first.mp3
-!frontend/public/audio/login_wrong.mp3
-!frontend/public/audio/yes_date_song.mp3
+# !frontend/public/audio/login_right.mp3
+# !frontend/public/audio/no_third_alarm.mp3
+# !frontend/public/audio/no_first.mp3
+# !frontend/public/audio/login_wrong.mp3
+# !frontend/public/audio/yes_date_song.mp3
 frontend/public/upi-scanner.jpeg
 frontend/out/
 frontend/tmp/

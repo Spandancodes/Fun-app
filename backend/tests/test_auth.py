@@ -172,3 +172,13 @@ def test_existing_password_database_migrates_without_losing_guest(tmp_path, monk
         assert conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' AND name='single_recipient'"
         ).fetchone() is None
+
+
+def test_game_health_does_not_depend_on_optional_plan_configuration(client, monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health/plan").status_code == 503
+    draft = {"id": str(uuid.uuid4()), "when": "Friday", "area": "Park", "outing": "Walk"}
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 503

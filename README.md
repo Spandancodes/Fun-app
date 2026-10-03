@@ -37,6 +37,8 @@ The Docker build exports Next.js as static files and serves them with FastAPI on
 
 The service configuration is in `render.yaml`. `APP_ORIGIN` is set to the custom domain, and the backend also accepts Render’s external hostname for same-origin POSTs. Put secrets in Render’s environment settings, never in the repository. When a new commit lands on the service’s linked branch, Render can deploy it automatically if Auto-Deploy is enabled. Verify the deployed commit on Render’s Deploys page.
 
+`GET /health` checks that the server can serve the game and is the Render health check. `GET /health/plan` checks the optional date-plan database and mail configuration. The game remains available if plan delivery is not configured; plan submission returns 503 until the required environment settings above are present. For local development, `MAIL_MODE=local` and any valid test-only `OWNER_EMAIL` write plans to the SQLite outbox without sending email.
+
 ## Audio
 
 See [AUDIO_SOURCES.md](AUDIO_SOURCES.md). The owner confirmed public hosting permission for the uploaded recordings. All five MP3s are included in Git and Docker. YES plays `/audio/yes_date_song.mp3` with pause and volume controls. Build checks verify exact SHA-256 hashes before compilation and after static export; missing or changed audio fails the build. No external music link or substitute is used.

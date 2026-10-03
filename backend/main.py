@@ -274,9 +274,17 @@ def send_email(conn: DatabaseConnection, recipients: list[str], subject: str,
 
 @app.get("/health")
 def health():
+    # Render's liveness probe should reflect whether this server can serve the
+    # game. Date-plan delivery has separate, optional configuration.
+    return {"status": "ok"}
+
+
+@app.get("/health/plan")
+def plan_health():
     try:
         if os.getenv("RENDER"):
-            signing_secret()
+            if not os.getenv("DATABASE_URL", "").strip():
+                raise RuntimeError("DATABASE_URL is required for plan delivery")
             if os.getenv("MAIL_MODE", "").lower() != "resend":
                 raise RuntimeError("MAIL_MODE must be resend in production")
             if not os.getenv("RESEND_API_KEY") or not os.getenv("MAIL_FROM"):
@@ -285,7 +293,7 @@ def health():
         with db():
             pass
     except Exception:
-        raise HTTPException(503, "Production configuration unavailable") from None
+        raise HTTPException(503, "Plan delivery unavailable") from None
     return {"status": "ok"}
 
 
@@ -435,6 +443,8 @@ def logout(request: Request, response: Response):
 @app.post("/api/plan")
 def send_plan(body: PlanRequest, request: Request):
     check_origin(request)
+    if os.getenv("RENDER") and not os.getenv("DATABASE_URL", "").strip():
+        raise HTTPException(503, "Plan storage is not configured")
     owner_email = os.getenv("OWNER_EMAIL", "").strip()
     try:
         owner_email = normalize_email(owner_email)

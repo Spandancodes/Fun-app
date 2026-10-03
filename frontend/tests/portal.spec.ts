@@ -81,7 +81,7 @@ test("three NO catches open a fake scanner assessment with free exits", async ({
   await expect(dialog).toContainText("No payment is requested or possible");
   await expect(
     dialog.getByRole("img", { name: /Non-scannable joke graphic/ }),
-  ).toHaveAttribute("src", "/upi-scanner-joke.png");
+  ).toHaveAttribute("src", "/upi-scanner-joke.jpg");
   await expect(
     dialog.getByRole("img", { name: "Benjamin Netanyahu reaction portrait" }),
   ).toBeVisible();

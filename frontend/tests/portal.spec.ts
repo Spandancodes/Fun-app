@@ -1,14 +1,24 @@
 import { expect, test } from "@playwright/test";
 import { startGame, steer } from "./helpers";
 
-test("missing YES recording leaves celebration usable without another sound", async ({ page }) => {
+test("missing YES recording leaves celebration usable without another sound", async ({
+  page,
+}) => {
   await page.route("**/audio/yes_date_song.mp3", (route) => route.abort());
   const warnings: string[] = [];
   page.on("console", (message) => warnings.push(message.text()));
   await startGame(page);
   await steer(page, "right", "right");
-  await expect(page.getByRole("heading", { name: /It’s done bro/ })).toBeVisible();
-  await expect.poll(() => warnings.some((message) => message.includes("Missing or unreadable YES music"))).toBe(true);
+  await expect(
+    page.getByRole("heading", { name: /It’s done bro/ }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      warnings.some((message) =>
+        message.includes("Missing or unreadable YES music"),
+      ),
+    )
+    .toBe(true);
   await expect(page.getByRole("link", { name: /YouTube/ })).toHaveCount(0);
 });
 
@@ -21,14 +31,24 @@ test("YES plays uploaded music with pause and volume controls and offers a revie
     page.getByRole("heading", { name: /It’s done bro/ }),
   ).toBeVisible();
   const song = page.locator("audio[src='/audio/yes_date_song.mp3']");
-  await expect.poll(() => song.evaluate((el: HTMLAudioElement) => !el.paused && el.currentTime > 0)).toBe(true);
+  await expect
+    .poll(() =>
+      song.evaluate((el: HTMLAudioElement) => !el.paused && el.currentTime > 0),
+    )
+    .toBe(true);
   await expect(page.getByRole("link", { name: /YouTube/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Pause music" }).click();
-  await expect.poll(() => song.evaluate((el: HTMLAudioElement) => el.paused)).toBe(true);
+  await expect
+    .poll(() => song.evaluate((el: HTMLAudioElement) => el.paused))
+    .toBe(true);
   await page.getByLabel("Music volume").fill("0.25");
-  await expect.poll(() => song.evaluate((el: HTMLAudioElement) => el.volume)).toBe(0.25);
+  await expect
+    .poll(() => song.evaluate((el: HTMLAudioElement) => el.volume))
+    .toBe(0.25);
   await page.getByRole("button", { name: "Play music" }).click();
-  await expect.poll(() => song.evaluate((el: HTMLAudioElement) => !el.paused)).toBe(true);
+  await expect
+    .poll(() => song.evaluate((el: HTMLAudioElement) => !el.paused))
+    .toBe(true);
   await expect(
     page.getByRole("link", { name: /Connect on Instagram/ }),
   ).toHaveAttribute("href", "https://www.instagram.com/_.avalanche.who");
@@ -55,9 +75,30 @@ test("YES plays uploaded music with pause and volume controls and offers a revie
     "local development outbox",
   );
   await page.getByRole("button", { name: "Play again" }).click();
-  await expect.poll(() => song.evaluate((el: HTMLAudioElement) => el.paused)).toBe(true);
+  await expect
+    .poll(() => song.evaluate((el: HTMLAudioElement) => el.paused))
+    .toBe(true);
   await expect(
     page.getByRole("heading", { name: "Thanisha its done bro" }),
+  ).toBeVisible();
+});
+
+test("unavailable plan email shows a usable fallback before submission", async ({
+  page,
+}) => {
+  await page.route("**/api/plan/status", (route) =>
+    route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+  );
+  await startGame(page);
+  await steer(page, "right", "right");
+  await expect(
+    page.getByText(/Plan email is unavailable right now/),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send our plan" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("link", { name: /Connect on Instagram/ }),
   ).toBeVisible();
 });
 

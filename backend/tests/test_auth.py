@@ -180,5 +180,6 @@ def test_game_health_does_not_depend_on_optional_plan_configuration(client, monk
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/health/plan").status_code == 503
+    assert client.get("/api/plan/status").status_code == 503
     draft = {"id": str(uuid.uuid4()), "when": "Friday", "area": "Park", "outing": "Walk"}
     assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 503

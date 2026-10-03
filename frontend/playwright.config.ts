@@ -23,6 +23,7 @@ export default defineConfig({
     {
       command: `npm run dev -- --port ${frontendPort}`,
       url: baseURL,
+      env: { BACKEND_URL: "http://127.0.0.1:8001" },
       reuseExistingServer: !process.env.CI,
     },
   ],

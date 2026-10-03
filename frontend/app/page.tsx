@@ -32,6 +32,7 @@ export default function Home() {
   );
   const [reviewingPlan, setReviewingPlan] = useState(false);
   const [bookingError, setBookingError] = useState("");
+  const [planAvailable, setPlanAvailable] = useState<boolean | null>(null);
   const [booking, setBooking] = useState<Booking>({
     date: "",
     time: "",
@@ -86,6 +87,17 @@ export default function Home() {
     if (!assessment && assessmentRef.current?.open)
       assessmentRef.current.close();
   }, [assessment]);
+
+  useEffect(() => {
+    if (screen !== "yes") return;
+    const controller = new AbortController();
+    fetch("/api/plan/status", { signal: controller.signal, cache: "no-store" })
+      .then((response) => setPlanAvailable(response.ok))
+      .catch(() => {
+        if (!controller.signal.aborted) setPlanAvailable(false);
+      });
+    return () => controller.abort();
+  }, [screen]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -211,6 +223,7 @@ export default function Home() {
     setGame(result.game);
     if (result.catch === "yes") {
       audio.current?.stop();
+      setPlanAvailable(null);
       playSong();
       setScreen("yes");
     } else if (result.catch === "no") {
@@ -291,14 +304,23 @@ export default function Home() {
           note: booking.note,
         }),
       });
-      if (!response.ok) throw new Error();
+      if (!response.ok) {
+        setBookingError(
+          response.status === 503
+            ? "Plan email is unavailable right now. Nothing was sent. Your draft is still here; you can use the Instagram link above."
+            : response.status === 429
+              ? "The plan email limit has been reached for today. Nothing was sent; your draft is still here."
+              : "The plan could not be sent. Nothing was sent; your draft is still here.",
+        );
+        return;
+      }
       const result: { delivery?: "local" | "resend" } = await response.json();
       if (result.delivery !== "local" && result.delivery !== "resend")
         throw new Error();
       setBookingSent(result.delivery);
     } catch {
       setBookingError(
-        "The plan email was not accepted. Your draft is still here; please retry.",
+        "Could not reach plan email right now. Nothing was sent; your draft is still here. You can use the Instagram link above.",
       );
     } finally {
       bookingSendingRef.current = false;
@@ -546,18 +568,27 @@ export default function Home() {
             <p>Your YES song</p>
             <button
               className="action-button"
-              onClick={() => songPlaying ? songRef.current?.pause() : playSong()}
+              onClick={() =>
+                songPlaying ? songRef.current?.pause() : playSong()
+              }
               disabled={muted}
             >
               {songPlaying ? "Pause music" : "Play music"}
             </button>
             <label htmlFor="song-volume">Music volume</label>
-            <input id="song-volume" type="range" min="0" max="1" step="0.05"
-              value={songVolume} onChange={(event) => {
+            <input
+              id="song-volume"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={songVolume}
+              onChange={(event) => {
                 const volume = Number(event.target.value);
                 setSongVolume(volume);
                 if (songRef.current) songRef.current.volume = volume;
-              }} />
+              }}
+            />
             {muted && <small>Turn sound on to play music.</small>}
           </div>
           <a
@@ -570,7 +601,15 @@ export default function Home() {
           </a>
           <section className="plan-panel" aria-labelledby="booking-title">
             <h2 id="booking-title">Request a date</h2>
-            {bookingSent ? (
+            {planAvailable === null ? (
+              <p role="status">Checking plan email…</p>
+            ) : !planAvailable ? (
+              <p role="status">
+                Plan email is unavailable right now. Nothing can be sent from
+                this form; you can use the Instagram link above to plan
+                together.
+              </p>
+            ) : bookingSent ? (
               <p className="booking-success" role="status">
                 {bookingSent === "local"
                   ? "Saved in the local development outbox; no email has been sent."
@@ -712,10 +751,18 @@ export default function Home() {
         </main>
       )}
 
-      <audio ref={songRef} src={YES_SONG} preload="none" muted={muted}
-        onPlay={() => setSongPlaying(true)} onPause={() => setSongPlaying(false)}
+      <audio
+        ref={songRef}
+        src={YES_SONG}
+        preload="none"
+        muted={muted}
+        onPlay={() => setSongPlaying(true)}
+        onPause={() => setSongPlaying(false)}
         onEnded={() => setSongPlaying(false)}
-        onError={() => console.warn("Missing or unreadable YES music: " + YES_SONG)} />
+        onError={() =>
+          console.warn("Missing or unreadable YES music: " + YES_SONG)
+        }
+      />
       <footer className="footer">
         A FICTIONAL ELECTION OFFICE · NO GOVERNMENT SERVICE · NO PAYMENT
         REQUIRED

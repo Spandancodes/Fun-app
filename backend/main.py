@@ -279,6 +279,7 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/plan/status")
 @app.get("/health/plan")
 def plan_health():
     try:

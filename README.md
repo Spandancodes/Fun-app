@@ -41,6 +41,12 @@ The service configuration is in `render.yaml`. `APP_ORIGIN` is set to the custom
 
 The YES screen checks `/api/plan/status` before showing the email form. When plan delivery is unavailable, it directs visitors to the existing Instagram link. A failed send keeps the entered draft on screen and says explicitly that no email was sent. The Render service must have a PostgreSQL database URL and a configured Resend account before email delivery can work; these values are not included in the repository.
 
+### Supabase Postgres
+
+Create a Supabase project, then open **Connect → Session pooler** and copy its PostgreSQL connection string. Use session mode on port 5432 for the long-running Render backend when an IPv4 connection is needed. Replace the password placeholder with your database password, percent-encoding reserved URL characters, and add `?sslmode=require` (or `&sslmode=require` if the string already has a query). Put the complete string only in Render's `DATABASE_URL` environment variable; never in Git, frontend variables, or chat. Do not use the transaction pooler on port 6543 with this app.
+
+The backend automatically creates its tables in the private `itsdonebro` schema on first database connection. Keep that schema out of Supabase's **Exposed schemas** setting. The app uses the server-side PostgreSQL connection directly, so it needs no Supabase anon key, service-role key, or browser database client. Once `DATABASE_URL` is set, `/health/plan` will still report unavailable until `OWNER_EMAIL`, `MAIL_MODE=resend`, `RESEND_API_KEY`, and a verified `MAIL_FROM` are also configured. Check `/health/plan` after Render redeploys, then send a test plan only when it reports healthy.
+
 ## Audio
 
 See [AUDIO_SOURCES.md](AUDIO_SOURCES.md). The owner confirmed public hosting permission for the uploaded recordings. All five MP3s are included in Git and Docker. YES plays `/audio/yes_date_song.mp3` with pause and volume controls. Build checks verify exact SHA-256 hashes before compilation and after static export; missing or changed audio fails the build. No external music link or substitute is used.

@@ -20,6 +20,8 @@ app = FastAPI(title="The Great No Chase", docs_url=None, redoc_url=None, openapi
 COOKIE = "bro_session"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 POSTGRES_SCHEMA = """
+CREATE SCHEMA IF NOT EXISTS itsdonebro;
+SET search_path TO itsdonebro;
 CREATE TABLE IF NOT EXISTS guests (
   id BIGSERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL,
   display_name TEXT NOT NULL, salt TEXT NOT NULL, digest TEXT NOT NULL,

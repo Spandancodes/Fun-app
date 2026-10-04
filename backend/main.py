@@ -281,6 +281,16 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/health/db")
+def database_health():
+    try:
+        with db() as conn:
+            conn.execute("SELECT 1")
+    except Exception:
+        raise HTTPException(503, "Database unavailable") from None
+    return {"status": "ok"}
+
+
 @app.get("/api/plan/status")
 @app.get("/health/plan")
 def plan_health():

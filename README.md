@@ -47,6 +47,8 @@ Create a Supabase project, then open **Connect → Session pooler** and copy its
 
 The backend automatically creates its tables in the private `itsdonebro` schema on first database connection. Keep that schema out of Supabase's **Exposed schemas** setting. The app uses the server-side PostgreSQL connection directly, so it needs no Supabase anon key, service-role key, or browser database client. Once `DATABASE_URL` is set, `/health/plan` will still report unavailable until `OWNER_EMAIL`, `MAIL_MODE=resend`, `RESEND_API_KEY`, and a verified `MAIL_FROM` are also configured. Check `/health/plan` after Render redeploys, then send a test plan only when it reports healthy.
 
+`GET /health/db` checks the database connection separately. It should return 200 after `DATABASE_URL` is saved in Render, even before email delivery is configured.
+
 ## Audio
 
 See [AUDIO_SOURCES.md](AUDIO_SOURCES.md). The owner confirmed public hosting permission for the uploaded recordings. All five MP3s are included in Git and Docker. YES plays `/audio/yes_date_song.mp3` with pause and volume controls. Build checks verify exact SHA-256 hashes before compilation and after static export; missing or changed audio fails the build. No external music link or substitute is used.

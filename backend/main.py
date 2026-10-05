@@ -1,12 +1,16 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
 import sqlite3
 import time
+import threading
 from contextlib import contextmanager
+from html import escape
+from email.utils import parseaddr
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -17,6 +21,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 app = FastAPI(title="The Great No Chase", docs_url=None, redoc_url=None, openapi_url=None)
+logger = logging.getLogger("uvicorn.error")
+_postgres_ready: set[str] = set()
+_postgres_init_lock = threading.Lock()
 COOKIE = "bro_session"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 POSTGRES_SCHEMA = """
@@ -53,7 +60,6 @@ CREATE TABLE IF NOT EXISTS outbox (
   id TEXT PRIMARY KEY, recipients TEXT NOT NULL,
   subject TEXT NOT NULL, body TEXT NOT NULL, created DOUBLE PRECISION NOT NULL
 );
-CREATE INDEX IF NOT EXISTS guests_email_unique ON guests(email);
 """
 
 
@@ -101,17 +107,31 @@ def db():
         import psycopg
         from psycopg.rows import dict_row
 
-        raw = psycopg.connect(database_url, row_factory=dict_row, connect_timeout=10)
+        try:
+            raw = psycopg.connect(database_url, row_factory=dict_row, connect_timeout=10)
+        except Exception as exc:
+            log_failure("database_connect", exc)
+            raise
         conn = DatabaseConnection(raw, postgres=True)
         try:
-            conn.executescript(POSTGRES_SCHEMA)
-            raw.execute("ALTER TABLE guests ADD COLUMN IF NOT EXISTS email TEXT")
-            raw.execute("ALTER TABLE date_bookings ADD COLUMN IF NOT EXISTS delivery_mode TEXT NOT NULL DEFAULT 'local'")
-            raw.execute("ALTER TABLE plans ADD COLUMN IF NOT EXISTS delivery_mode TEXT NOT NULL DEFAULT 'local'")
+            fingerprint = token_hash(database_url)
+            with _postgres_init_lock:
+                if fingerprint not in _postgres_ready:
+                    conn.executescript(POSTGRES_SCHEMA)
+                    raw.execute("ALTER TABLE guests ADD COLUMN IF NOT EXISTS email TEXT")
+                    raw.execute("CREATE UNIQUE INDEX IF NOT EXISTS guests_email_unique ON guests(email)")
+                    raw.execute("ALTER TABLE date_bookings ADD COLUMN IF NOT EXISTS delivery_mode TEXT NOT NULL DEFAULT 'local'")
+                    raw.execute("ALTER TABLE plans ADD COLUMN IF NOT EXISTS delivery_mode TEXT NOT NULL DEFAULT 'local'")
+                    migrate_bookings(conn)
+                    conn.commit()
+                    _postgres_ready.add(fingerprint)
+            raw.execute("SET search_path TO itsdonebro")
             conn.commit()
             yield conn
             conn.commit()
-        except Exception:
+        except Exception as exc:
+            if not isinstance(exc, HTTPException):
+                log_failure("database_transaction", exc)
             conn.rollback()
             raise
         finally:
@@ -172,6 +192,8 @@ def db():
     if "delivery_mode" not in plan_columns:
         conn.execute("ALTER TABLE plans ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'local'")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS guests_email_unique ON guests(email)")
+    migrate_bookings(conn)
+    conn.commit()
     try:
         yield conn
         conn.commit()
@@ -181,6 +203,47 @@ def db():
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def log_failure(stage: str, exc: Exception):
+    # Never log the exception text/traceback: drivers may include connection
+    # strings and providers may echo recipients or authentication information.
+    sqlstate = getattr(exc, "sqlstate", None)
+    safe_state = sqlstate if isinstance(sqlstate, str) and re.fullmatch(r"[A-Z0-9]{5}", sqlstate) else "none"
+    status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else "none"
+    logger.error("plan_failure stage=%s type=%s sqlstate=%s http_status=%s",
+                 stage, type(exc).__name__, safe_state, status)
+
+
+def migrate_bookings(conn: DatabaseConnection):
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(date_bookings)")} if not conn.postgres else set()
+    for name, definition in {
+        "guest_email": "TEXT",
+        "payload": "TEXT",
+        "mail_payload": "TEXT",
+        "status": "TEXT NOT NULL DEFAULT 'accepted'",
+    }.items():
+        if conn.postgres:
+            conn.execute(f"ALTER TABLE date_bookings ADD COLUMN IF NOT EXISTS {name} {definition}")
+        elif name not in columns:
+            conn.execute(f"ALTER TABLE date_bookings ADD COLUMN {name} {definition}")
+
+
+def mail_configuration() -> tuple[str, str, str]:
+    mode = os.getenv("MAIL_MODE", "local").strip().lower()
+    owner = normalize_email(os.getenv("OWNER_EMAIL", ""))
+    sender = os.getenv("MAIL_FROM", "").strip()
+    if os.getenv("RENDER") and mode != "resend":
+        raise RuntimeError("Production requires Resend")
+    if mode not in {"local", "resend"}:
+        raise RuntimeError("Invalid mail mode")
+    if mode == "resend":
+        if not os.getenv("RESEND_API_KEY", "").strip():
+            raise RuntimeError("Missing Resend key")
+        sender_address = normalize_email(parseaddr(sender)[1])
+        if sender_address.rsplit("@", 1)[1] in {"gmail.com", "resend.dev"}:
+            raise RuntimeError("Use a verified sending domain")
+    return mode, owner, sender
 
 
 def signing_secret() -> bytes:
@@ -247,24 +310,26 @@ def public_origin() -> str:
 
 
 def send_email(conn: DatabaseConnection, recipients: list[str], subject: str,
-               body: str, key: str) -> str:
+               body: str, key: str, html_body: str | None = None,
+               sender_override: str | None = None) -> str:
     mode = os.getenv("MAIL_MODE", "local").lower()
     if mode == "local":
         conn.execute(
-            "INSERT OR IGNORE INTO outbox VALUES (?,?,?,?,?)",
+            "INSERT INTO outbox VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
             (key, json.dumps(recipients), subject, body, time.time()),
         )
         return key
     if mode != "resend":
         raise RuntimeError("MAIL_MODE must be local or resend")
     api_key = os.getenv("RESEND_API_KEY")
-    sender = os.getenv("MAIL_FROM")
+    sender = sender_override or os.getenv("MAIL_FROM")
     if not api_key or not sender:
         raise RuntimeError("RESEND_API_KEY and MAIL_FROM are required")
     result = httpx.post(
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {api_key}", "Idempotency-Key": key},
-        json={"from": sender, "to": recipients, "subject": subject, "text": body},
+        json={"from": sender, "to": recipients, "subject": subject, "text": body,
+              **({"html": html_body} if html_body else {})},
         timeout=10,
     )
     result.raise_for_status()
@@ -286,7 +351,8 @@ def database_health():
     try:
         with db() as conn:
             conn.execute("SELECT 1")
-    except Exception:
+    except Exception as exc:
+        log_failure("database_health", exc)
         raise HTTPException(503, "Database unavailable") from None
     return {"status": "ok"}
 
@@ -295,17 +361,11 @@ def database_health():
 @app.get("/health/plan")
 def plan_health():
     try:
-        if os.getenv("RENDER"):
-            if not os.getenv("DATABASE_URL", "").strip():
-                raise RuntimeError("DATABASE_URL is required for plan delivery")
-            if os.getenv("MAIL_MODE", "").lower() != "resend":
-                raise RuntimeError("MAIL_MODE must be resend in production")
-            if not os.getenv("RESEND_API_KEY") or not os.getenv("MAIL_FROM"):
-                raise RuntimeError("Email provider is not configured")
-            normalize_email(os.getenv("OWNER_EMAIL", ""))
         with db():
             pass
-    except Exception:
+        mail_configuration()
+    except Exception as exc:
+        log_failure("plan_health", exc)
         raise HTTPException(503, "Plan delivery unavailable") from None
     return {"status": "ok"}
 
@@ -324,10 +384,16 @@ class LoginRequest(BaseModel):
 class PlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[a-f0-9-]{36}$")
+    email: str = Field(min_length=3, max_length=254)
     when: str = Field(min_length=1, max_length=100)
     area: str = Field(min_length=1, max_length=100)
     outing: str = Field(min_length=1, max_length=100)
     note: str = Field(default="", max_length=500)
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value: str) -> str:
+        return normalize_email(value)
 
     @field_validator("when", "area", "outing", "note")
     @classmethod
@@ -347,6 +413,9 @@ async def private_responses(request: Request, call_next):
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
+    commit = os.getenv("RENDER_GIT_COMMIT", "")
+    if re.fullmatch(r"[a-f0-9]{40}", commit):
+        response.headers["X-App-Commit"] = commit
     return response
 
 
@@ -453,58 +522,93 @@ def logout(request: Request, response: Response):
     return {"ok": True}
 
 
+def plan_message(body: PlanRequest) -> dict:
+    fields = [("Preferred day or time", body.when), ("Area or location", body.area),
+              ("Type of outing", body.outing), ("Note", body.note or "None")]
+    intro = "Here is your proposed date plan, shared with you and Spandan."
+    closing = ("This is a proposal, not a confirmed date, time, or venue. "
+               "You can decide the details together. Spandan now gets to plan something "
+               "worthwhile around his ten-hour workday. It's done bro — the planning begins!")
+    text = intro + "\n\n" + "\n".join(f"{label}: {value}" for label, value in fields) + "\n\n" + closing
+    rows = "".join(f"<dt><strong>{escape(label)}</strong></dt><dd>{escape(value).replace(chr(10), '<br>')}</dd>" for label, value in fields)
+    html = f"<h1>Your proposed date plan</h1><p>{escape(intro)}</p><dl>{rows}</dl><p>{escape(closing)}</p>"
+    return {"subject": "Your proposed date plan · It's Done Bro", "text": text, "html": html}
+
+
 @app.post("/api/plan")
 def send_plan(body: PlanRequest, request: Request):
     check_origin(request)
-    if os.getenv("RENDER") and not os.getenv("DATABASE_URL", "").strip():
-        raise HTTPException(503, "Plan storage is not configured")
-    owner_email = os.getenv("OWNER_EMAIL", "").strip()
     try:
-        owner_email = normalize_email(owner_email)
-    except ValueError:
+        mode, owner, sender = mail_configuration()
+    except Exception as exc:
+        log_failure("mail_configuration", exc)
         raise HTTPException(503, "Plan email is not configured") from None
+    try:
+        return save_and_deliver_plan(body, request, mode, owner, sender)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log_failure("plan_storage", exc)
+        raise HTTPException(503, "Plan delivery was not confirmed. Keep this draft and retry.") from None
+
+
+def save_and_deliver_plan(body: PlanRequest, request: Request, mode: str, owner: str, sender: str):
     now = time.time()
     requester_key = token_hash(request.client.host if request.client else "local")
-    content = {"when": body.when, "area": body.area,
-               "outing": body.outing, "note": body.note}
-    digest = token_hash(json.dumps(content, sort_keys=True))
+    content = body.model_dump(exclude={"id"})
+    payload = json.dumps(content, sort_keys=True)
+    digest = token_hash(payload)
     with db() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if conn.postgres:
+            # Serialize quota checks and draft creation for the same requester.
+            conn.execute("SELECT pg_advisory_xact_lock(?)", (int(requester_key[:15], 16),))
         existing = conn.execute("SELECT * FROM date_bookings WHERE id=?", (body.id,)).fetchone()
         if existing:
-            if existing["requester_key"] != requester_key or existing["payload_digest"] != digest:
+            if existing["payload_digest"] != digest:
                 raise HTTPException(409, "This submission ID belongs to another draft")
-            return {"sent": True, "delivery": existing["delivery_mode"]}
-        conn.execute("DELETE FROM booking_rate_limits WHERE expires < ?", (now,))
-        attempt = conn.execute("SELECT count FROM booking_rate_limits WHERE key=?", (requester_key,)).fetchone()
-        if attempt and attempt["count"] >= 3:
-            raise HTTPException(429, "Plan limit reached for today")
-        message = (
-            "THE GREAT NO CHASE — DATE PLAN\n\n"
-            "From: Thanisha\n"
-            f"Preferred day or time: {body.when}\n"
-            f"Area or location: {body.area}\n"
-            f"Type of outing: {body.outing}\n"
-            f"Note: {body.note or 'None'}\n\n"
-            "Sent after the guest reviewed and submitted this plan."
-        )
+            if existing["status"] == "accepted":
+                return {"sent": True, "delivery": existing["delivery_mode"]}
+        else:
+            conn.execute("DELETE FROM booking_rate_limits WHERE expires < ?", (now,))
+            attempt = conn.execute("SELECT count FROM booking_rate_limits WHERE key=?", (requester_key,)).fetchone()
+            if attempt and attempt["count"] >= 3:
+                raise HTTPException(429, "Plan limit reached for today")
+            mail = {**plan_message(body), "recipients": list(dict.fromkeys([body.email, owner])), "sender": sender}
+            conn.execute(
+                "INSERT INTO date_bookings(id,payload_digest,provider_id,delivery_mode,requester_key,created,guest_email,payload,mail_payload,status) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (body.id, digest, "", mode, requester_key, now, body.email, payload, json.dumps(mail), "pending"),
+            )
+            conn.execute(
+                "INSERT INTO booking_rate_limits(key,count,expires) VALUES (?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET count=booking_rate_limits.count+1",
+                (requester_key, 1, now + 86400),
+            )
+        # The complete plan is durable BEFORE contacting the email provider.
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        suffix = " FOR UPDATE" if conn.postgres else ""
+        saved = conn.execute("SELECT * FROM date_bookings WHERE id=?" + suffix, (body.id,)).fetchone()
+        if saved["status"] == "accepted":
+            return {"sent": True, "delivery": saved["delivery_mode"]}
+        if saved["delivery_mode"] != mode:
+            raise HTTPException(409, "This draft belongs to a different delivery environment")
+        # Resend retains idempotency keys for 24h. Fail closed before expiry if
+        # acceptance remains uncertain; an operator must reconcile older drafts.
+        if mode == "resend" and now - saved["created"] >= 23 * 3600:
+            raise HTTPException(409, "Delivery needs manual review; do not submit a new copy")
+        mail = json.loads(saved["mail_payload"])
         try:
-            provider_id = send_email(conn, [owner_email], "A date plan from Thanisha",
-                                     message, f"plan/{body.id}")
+            provider_id = send_email(conn, mail["recipients"], mail["subject"], mail["text"],
+                                     f"plan/{body.id}", mail["html"], mail["sender"])
         except Exception as exc:
-            print(f"Plan email was not accepted: {type(exc).__name__}", flush=True)
-            raise HTTPException(503, "Could not send the plan. Please retry.") from None
-        delivery_mode = os.getenv("MAIL_MODE", "local").lower()
-        conn.execute("INSERT INTO date_bookings VALUES (?,?,?,?,?,?)",
-                     (body.id, digest, provider_id, delivery_mode, requester_key, now))
-        conn.execute(
-            "INSERT INTO booking_rate_limits(key,count,expires) VALUES (?,?,?) "
-            "ON CONFLICT(key) DO UPDATE SET count=booking_rate_limits.count+1",
-            (requester_key, 1, now + 86400),
-        )
-    return {"sent": True, "delivery": delivery_mode}
-
-
+            log_failure("resend_send", exc)
+            raise HTTPException(503, "Plan saved, but email acceptance was not confirmed. Retry this draft.") from None
+        conn.execute("UPDATE date_bookings SET provider_id=?,status='accepted' WHERE id=?", (provider_id, body.id))
+        conn.commit()
+        logger.info("plan_delivery_accepted plan_id=%s mode=%s recipients=%s", body.id, mode, len(mail["recipients"]))
+    return {"sent": True, "delivery": mode}
 
 
 static_root = Path(os.getenv("STATIC_DIR", Path(__file__).resolve().parents[1] / "frontend" / "out"))

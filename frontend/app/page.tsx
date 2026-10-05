@@ -6,6 +6,7 @@ import { advance, Direction, Game, newGame, SIZE } from "@/lib/game";
 
 type Screen = "board" | "yes" | "exit";
 type Booking = {
+  email: string;
   date: string;
   time: string;
   area: string;
@@ -33,7 +34,9 @@ export default function Home() {
   const [reviewingPlan, setReviewingPlan] = useState(false);
   const [bookingError, setBookingError] = useState("");
   const [planAvailable, setPlanAvailable] = useState<boolean | null>(null);
+  const [planCheck, setPlanCheck] = useState(0);
   const [booking, setBooking] = useState<Booking>({
+    email: "",
     date: "",
     time: "",
     area: "",
@@ -97,7 +100,7 @@ export default function Home() {
         if (!controller.signal.aborted) setPlanAvailable(false);
       });
     return () => controller.abort();
-  }, [screen]);
+  }, [screen, planCheck]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -298,6 +301,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: bookingId.current,
+          email: booking.email,
           when: `${booking.date} at ${booking.time}`,
           area: booking.area,
           outing: booking.outing,
@@ -307,10 +311,12 @@ export default function Home() {
       if (!response.ok) {
         setBookingError(
           response.status === 503
-            ? "Plan email is unavailable right now. Nothing was sent. Your draft is still here; you can use the Instagram link above."
+            ? "Email delivery was not confirmed. Your draft is still here; retry this same plan."
             : response.status === 429
               ? "The plan email limit has been reached for today. Nothing was sent; your draft is still here."
-              : "The plan could not be sent. Nothing was sent; your draft is still here.",
+              : response.status === 409
+                ? "This draft needs review before another send. Keep it and contact Spandan using Instagram."
+                : "The plan could not be sent. Your draft is still here.",
         );
         return;
       }
@@ -320,7 +326,7 @@ export default function Home() {
       setBookingSent(result.delivery);
     } catch {
       setBookingError(
-        "Could not reach plan email right now. Nothing was sent; your draft is still here. You can use the Instagram link above.",
+        "Email delivery was not confirmed. Your draft is still here; retry this same plan.",
       );
     } finally {
       bookingSendingRef.current = false;
@@ -604,16 +610,27 @@ export default function Home() {
             {planAvailable === null ? (
               <p role="status">Checking plan email…</p>
             ) : !planAvailable ? (
-              <p role="status">
-                Plan email is unavailable right now. Nothing can be sent from
-                this form; you can use the Instagram link above to plan
-                together.
-              </p>
+              <div>
+                <p role="status">
+                  Plan email is unavailable right now. Nothing can be sent from
+                  this form; you can use the Instagram link above to plan
+                  together.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlanAvailable(null);
+                    setPlanCheck((value) => value + 1);
+                  }}
+                >
+                  Check again
+                </button>
+              </div>
             ) : bookingSent ? (
               <p className="booking-success" role="status">
                 {bookingSent === "local"
                   ? "Saved in the local development outbox; no email has been sent."
-                  : "Your plan email was accepted for delivery to Spandan. This is not a confirmed calendar booking."}
+                  : "Your plan email was accepted for delivery to you and Spandan. This is a proposal, not a confirmed booking."}
               </p>
             ) : reviewingPlan ? (
               <section
@@ -622,6 +639,8 @@ export default function Home() {
               >
                 <p>Hi Thanisha — here’s the plan for review:</p>
                 <dl>
+                  <dt>Your email copy</dt>
+                  <dd>{booking.email}</dd>
                   <dt>Preferred date and time</dt>
                   <dd>
                     {booking.date} · {booking.time}
@@ -634,12 +653,13 @@ export default function Home() {
                   <dd>{booking.note || "None"}</dd>
                 </dl>
                 <p className="booking-disclaimer">
-                  When you press Send our plan, it will go to Spandan. Nothing
-                  has been sent yet.
+                  When you press Send our plan, a copy will go to your email and
+                  Spandan. Nothing has been sent yet.
                 </p>
                 <div className="overlay-actions">
                   <button
                     className="secondary-button"
+                    disabled={bookingSending}
                     onClick={() => setReviewingPlan(false)}
                   >
                     Edit plan
@@ -660,6 +680,18 @@ export default function Home() {
               </section>
             ) : (
               <form onSubmit={reviewBooking}>
+                <label htmlFor="booking-email">Your email</label>
+                <input
+                  id="booking-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  maxLength={254}
+                  value={booking.email}
+                  onChange={(event) =>
+                    updateBooking({ email: event.target.value })
+                  }
+                />
                 <div className="booking-row">
                   <div>
                     <label htmlFor="booking-date">Preferred date</label>

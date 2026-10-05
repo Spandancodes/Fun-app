@@ -53,16 +53,17 @@ test("YES plays uploaded music with pause and volume controls and offers a revie
     page.getByRole("link", { name: /Connect on Instagram/ }),
   ).toHaveAttribute("href", "https://www.instagram.com/_.avalanche.who");
   await expect(page.getByLabel("Preferred date")).toBeVisible();
-  await expect(page.getByLabel("Email")).toHaveCount(0);
+  await expect(page.getByLabel("Your email")).toBeVisible();
 
   await page.route("**/api/plan", async (route) => {
-    expect(route.request().postDataJSON()).not.toHaveProperty("email");
+    expect(route.request().postDataJSON().email).toBe("guest@example.test");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ sent: true, delivery: "local" }),
     });
   });
+  await page.getByLabel("Your email").fill("guest@example.test");
   await page.getByLabel("Preferred date").fill("2026-10-10");
   await page.getByLabel("Preferred time").fill("17:00");
   await page.getByLabel("Area or location").fill("South Kolkata");
@@ -232,4 +233,44 @@ test("opens the snake board directly without sign-in", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Move right" })).toBeVisible();
   await expect(page.getByLabel("Email")).toHaveCount(0);
   expect(authRequests).toEqual([]);
+});
+
+test("failed plan keeps review and retries the same submission without extra sends", async ({
+  page,
+}) => {
+  await page.route("**/api/plan/status", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"status":"ok"}',
+    }),
+  );
+  const submissions: { id: string; email: string }[] = [];
+  await page.route("**/api/plan", async (route) => {
+    submissions.push(route.request().postDataJSON());
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await route.fulfill({
+      status: submissions.length === 1 ? 503 : 200,
+      contentType: "application/json",
+      body:
+        submissions.length === 1 ? "{}" : '{"sent":true,"delivery":"resend"}',
+    });
+  });
+  await startGame(page);
+  await steer(page, "right", "right");
+  await page.getByLabel("Your email").fill("guest@example.test");
+  await page.getByLabel("Preferred date").fill("2026-10-10");
+  await page.getByLabel("Preferred time").fill("17:00");
+  await page.getByLabel("Area or location").fill("Park");
+  await page.getByRole("button", { name: "Review our plan" }).click();
+  expect(submissions).toHaveLength(0);
+  await page.getByRole("button", { name: "Send our plan" }).click();
+  await expect(page.getByRole("region", { name: "Review your date plan" }).getByRole("alert")).toContainText("retry this same plan");
+  await expect(
+    page.getByRole("region", { name: "Review your date plan" }),
+  ).toContainText("guest@example.test");
+  await page.getByRole("button", { name: "Send our plan" }).click();
+  await expect(page.getByRole("status")).toContainText("you and Spandan");
+  expect(submissions).toHaveLength(2);
+  expect(submissions[0].id).toBe(submissions[1].id);
 });

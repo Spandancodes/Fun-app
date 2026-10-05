@@ -14,6 +14,8 @@ ORIGIN = {"Origin": "http://localhost:3000"}
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("RENDER", raising=False)
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "test.sqlite3"))
     monkeypatch.setenv("MAIL_MODE", "local")
     monkeypatch.setenv("OWNER_EMAIL", "spandan@example.test")
@@ -74,10 +76,10 @@ def test_email_link_is_private_short_lived_and_one_use(client):
     ].endswith("?link=invalid")
 
 
-def test_plan_is_public_owner_only_and_idempotent(client):
+def test_plan_is_public_two_recipients_and_idempotent(client):
     assert client.get("/api/session").status_code == 401
     draft = {
-        "id": str(uuid.uuid4()),
+        "email": "guest@example.test", "id": str(uuid.uuid4()),
         "when": "Saturday afternoon",
         "area": "South Kolkata",
         "outing": "Coffee and a walk",
@@ -95,17 +97,17 @@ def test_plan_is_public_owner_only_and_idempotent(client):
     ).status_code == 409
     with db() as conn:
         mail = conn.execute(
-            "SELECT recipients,body FROM outbox WHERE subject LIKE 'A date plan%'"
+            "SELECT recipients,body FROM outbox WHERE subject LIKE 'Your proposed date plan%'"
         ).fetchall()
     assert len(mail) == 1
-    assert json.loads(mail[0]["recipients"]) == ["spandan@example.test"]
+    assert json.loads(mail[0]["recipients"]) == ["guest@example.test", "spandan@example.test"]
     assert "Saturday afternoon" in mail[0]["body"]
     assert "Somewhere quiet" in mail[0]["body"]
 
 
 def test_plan_failure_keeps_retry_available_and_rate_limit(client, monkeypatch):
     assert client.get("/api/session").status_code == 401
-    draft = {"id": str(uuid.uuid4()), "when": "Friday", "area": "Park",
+    draft = {"email": "guest@example.test", "id": str(uuid.uuid4()), "when": "Friday", "area": "Park",
              "outing": "Walk", "note": ""}
     monkeypatch.delenv("OWNER_EMAIL")
     assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 503
@@ -139,14 +141,14 @@ def test_resend_acceptance_and_idempotency_key(client, monkeypatch):
         return Accepted()
 
     monkeypatch.setattr("main.httpx.post", fake_post)
-    draft = {"id": str(uuid.uuid4()), "when": "Friday", "area": "Park",
+    draft = {"email": "guest@example.test", "id": str(uuid.uuid4()), "when": "Friday", "area": "Park",
              "outing": "Walk", "note": ""}
     assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 200
     assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 200
     assert len(calls) == 1
     assert calls[0][0] == "https://api.resend.com/emails"
     assert calls[0][1]["headers"]["Idempotency-Key"] == f"plan/{draft['id']}"
-    assert calls[0][1]["json"]["to"] == ["spandan@example.test"]
+    assert calls[0][1]["json"]["to"] == ["guest@example.test", "spandan@example.test"]
 
 
 def test_existing_password_database_migrates_without_losing_guest(tmp_path, monkeypatch):
@@ -182,5 +184,99 @@ def test_game_health_does_not_depend_on_optional_plan_configuration(client, monk
     assert client.get("/health/db").status_code == 503
     assert client.get("/health/plan").status_code == 503
     assert client.get("/api/plan/status").status_code == 503
-    draft = {"id": str(uuid.uuid4()), "when": "Friday", "area": "Park", "outing": "Walk"}
+    draft = {"email": "guest@example.test", "id": str(uuid.uuid4()), "when": "Friday", "area": "Park", "outing": "Walk"}
     assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 503
+
+
+def test_failed_provider_keeps_saved_plan_and_same_retry_payload(client, monkeypatch):
+    import httpx
+    monkeypatch.setenv("MAIL_MODE", "resend")
+    monkeypatch.setenv("RESEND_API_KEY", "test-key-never-real")
+    monkeypatch.setenv("MAIL_FROM", "Plan <plan@example.test>")
+    draft = {"email": "guest@example.test", "id": str(uuid.uuid4()), "when": "Friday", "area": "<script>bad()</script>", "outing": "Walk", "note": "Warm & quiet"}
+    calls = []
+
+    def post(url, **kwargs):
+        # A separate connection sees a committed, complete plan before send.
+        with db() as conn:
+            row = conn.execute("SELECT * FROM date_bookings WHERE id=?", (draft["id"],)).fetchone()
+            assert row["status"] == "pending"
+            assert json.loads(row["payload"])["email"] == draft["email"]
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("secret must never appear in logs")
+        return type("Accepted", (), {"raise_for_status": lambda self: None, "json": lambda self: {"id": "accepted-test"}})()
+
+    monkeypatch.setattr("main.httpx.post", post)
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 503
+    with db() as conn:
+        assert conn.execute("SELECT status FROM date_bookings WHERE id=?", (draft["id"],)).fetchone()[0] == "pending"
+    monkeypatch.setenv("MAIL_FROM", "Different <new@example.test>")
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 200
+    assert calls[0] == calls[1]
+    assert "&lt;script&gt;" in calls[1]["json"]["html"]
+    assert "<script>" not in calls[1]["json"]["html"]
+    assert "proposal" in calls[1]["json"]["text"]
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 200
+    assert len(calls) == 2
+
+
+def test_configuration_and_database_failures_never_send(client, monkeypatch, caplog):
+    from contextlib import contextmanager
+    draft = {"email": "guest@example.test", "id": str(uuid.uuid4()), "when": "Friday", "area": "Park", "outing": "Walk"}
+    calls = []
+    monkeypatch.setattr("main.httpx.post", lambda *a, **kw: calls.append(kw))
+    monkeypatch.setenv("MAIL_MODE", "resend")
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    assert client.get("/health/plan").status_code == 503
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 503
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    monkeypatch.setenv("MAIL_FROM", "Plan <plan@example.test>")
+
+    @contextmanager
+    def broken():
+        raise RuntimeError("password-secret and API-key-secret")
+        yield
+
+    monkeypatch.setattr("main.db", broken)
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 503
+    assert not calls
+    assert "password-secret" not in caplog.text
+    assert "plan_storage" in caplog.text
+
+
+def test_guest_email_validation_and_expired_uncertain_attempt(client, monkeypatch):
+    draft = {"email": "not-email", "id": str(uuid.uuid4()), "when": "Friday", "area": "Park", "outing": "Walk"}
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 422
+    monkeypatch.setenv("MAIL_MODE", "resend")
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    monkeypatch.setenv("MAIL_FROM", "Plan <plan@example.test>")
+    calls = []
+    def post(*a, **kw):
+        calls.append(kw)
+        raise TimeoutError()
+    monkeypatch.setattr("main.httpx.post", post)
+    draft["email"] = "guest@example.test"
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 503
+    with db() as conn:
+        conn.execute("UPDATE date_bookings SET created=? WHERE id=?", (time.time() - 86400, draft["id"]))
+    assert client.post("/api/plan", headers=ORIGIN, json=draft).status_code == 409
+    assert len(calls) == 1
+
+
+def test_simultaneous_submissions_send_once(client, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    monkeypatch.setenv("MAIL_MODE", "resend")
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    monkeypatch.setenv("MAIL_FROM", "Plan <plan@example.test>")
+    calls = []
+    def post(*a, **kw):
+        calls.append(kw)
+        time.sleep(0.1)
+        return type("Accepted", (), {"raise_for_status": lambda self: None, "json": lambda self: {"id": "accepted-test"}})()
+    monkeypatch.setattr("main.httpx.post", post)
+    draft = {"email": "guest@example.test", "id": str(uuid.uuid4()), "when": "Friday", "area": "Park", "outing": "Walk"}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _: client.post("/api/plan", headers=ORIGIN, json=draft), range(2)))
+    assert [response.status_code for response in responses] == [200, 200]
+    assert len(calls) == 1

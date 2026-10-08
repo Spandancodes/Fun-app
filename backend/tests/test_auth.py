@@ -79,7 +79,7 @@ def test_email_link_is_private_short_lived_and_one_use(client):
 def test_plan_is_public_two_recipients_and_idempotent(client):
     assert client.get("/api/session").status_code == 401
     draft = {
-        "email": "guest@example.test", "id": str(uuid.uuid4()),
+        "name": "Test Guest", "email": "guest@example.test", "id": str(uuid.uuid4()),
         "when": "Saturday afternoon",
         "area": "South Kolkata",
         "outing": "Coffee and a walk",
@@ -102,6 +102,7 @@ def test_plan_is_public_two_recipients_and_idempotent(client):
     assert len(mail) == 1
     assert json.loads(mail[0]["recipients"]) == ["guest@example.test", "spandan@example.test"]
     assert "Saturday afternoon" in mail[0]["body"]
+    assert "Test Guest" in mail[0]["body"]
     assert "Somewhere quiet" in mail[0]["body"]
 
 
@@ -163,20 +164,20 @@ def test_existing_password_database_migrates_without_losing_guest(tmp_path, monk
           WHEN EXISTS (SELECT 1 FROM guests)
           BEGIN SELECT RAISE(ABORT, 'one person'); END;
           INSERT INTO guests(name,display_name,salt,digest)
-          VALUES ('thanisha','Thanisha','old','old');
+          VALUES ('example','Example','old','old');
         """)
     monkeypatch.setenv("DATABASE_PATH", str(database))
     with db() as conn:
         row = conn.execute("SELECT name,display_name,email FROM guests").fetchone()
         assert (row["name"], row["display_name"], row["email"]) == (
-            "thanisha", "Thanisha", None
+            "example", "Example", None
         )
         assert conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' AND name='single_recipient'"
         ).fetchone() is None
 
 
-def test_game_health_does_not_depend_on_optional_plan_configuration(client, monkeypatch):
+def test_page_health_does_not_depend_on_optional_plan_configuration(client, monkeypatch):
     monkeypatch.setenv("RENDER", "true")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("RESEND_API_KEY", raising=False)

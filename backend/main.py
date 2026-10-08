@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
-app = FastAPI(title="The Great No Chase", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="One Question", docs_url=None, redoc_url=None, openapi_url=None)
 logger = logging.getLogger("uvicorn.error")
 _postgres_ready: set[str] = set()
 _postgres_init_lock = threading.Lock()
@@ -384,6 +384,7 @@ class LoginRequest(BaseModel):
 class PlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[a-f0-9-]{36}$")
+    name: str = Field(default="", max_length=80)
     email: str = Field(min_length=3, max_length=254)
     when: str = Field(min_length=1, max_length=100)
     area: str = Field(min_length=1, max_length=100)
@@ -395,11 +396,11 @@ class PlanRequest(BaseModel):
     def valid_email(cls, value: str) -> str:
         return normalize_email(value)
 
-    @field_validator("when", "area", "outing", "note")
+    @field_validator("name", "when", "area", "outing", "note")
     @classmethod
     def clean(cls, value: str, info: ValidationInfo) -> str:
         value = value.strip()
-        if info.field_name != "note" and not value:
+        if info.field_name not in {"note", "name"} and not value:
             raise ValueError("This field is required")
         if info.field_name != "note" and ("\n" in value or "\t" in value):
             raise ValueError("Use a single line")
@@ -525,6 +526,8 @@ def logout(request: Request, response: Response):
 def plan_message(body: PlanRequest) -> dict:
     fields = [("Preferred day or time", body.when), ("Area or location", body.area),
               ("Type of outing", body.outing), ("Note", body.note or "None")]
+    if body.name:
+        fields.insert(0, ("Proposed by", body.name))
     intro = "Here is your proposed date plan, shared with you and Spandan."
     closing = ("This is a proposal, not a confirmed date, time, or venue. "
                "You can decide the details together. Spandan now gets to plan something "

@@ -1,276 +1,114 @@
 import { expect, test } from "@playwright/test";
-import { startGame, steer } from "./helpers";
 
-test("missing YES recording leaves celebration usable without another sound", async ({
-  page,
-}) => {
-  await page.route("**/audio/yes_date_song.mp3", (route) => route.abort());
-  const warnings: string[] = [];
-  page.on("console", (message) => warnings.push(message.text()));
-  await startGame(page);
-  await steer(page, "right", "right");
-  await expect(
-    page.getByRole("heading", { name: /It’s done bro/ }),
-  ).toBeVisible();
-  await expect
-    .poll(() =>
-      warnings.some((message) =>
-        message.includes("Missing or unreadable YES music"),
-      ),
-    )
-    .toBe(true);
-  await expect(page.getByRole("link", { name: /YouTube/ })).toHaveCount(0);
+async function openQuestion(page: import("@playwright/test").Page) {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Open it/ }).click();
+}
+
+test("opening, all five replies, terms, and both answers stay usable", async ({ page }) => {
+  await openQuestion(page);
+  await expect(page.getByText("Would you go on a date with me?")).toBeVisible();
+  for (const label of ["Why an entire website?", "What’s the plan?", "Why me?", "What if it’s awkward?", "What if I say no?"]) {
+    const button = page.getByRole("button", { name: label });
+    await button.click();
+    await expect(button).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("button", { name: "Yes, take me out" })).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Terms and conditions" }).click();
+  await expect(page.getByText("One date. No compulsory sequel.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "No", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test("YES plays uploaded music with pause and volume controls and offers a reviewed plan", async ({
-  page,
-}) => {
-  await startGame(page);
-  await steer(page, "right", "right");
-  await expect(
-    page.getByRole("heading", { name: /It’s done bro/ }),
-  ).toBeVisible();
-  const song = page.locator("audio[src='/audio/yes_date_song.mp3']");
-  await expect
-    .poll(() =>
-      song.evaluate((el: HTMLAudioElement) => !el.paused && el.currentTime > 0),
-    )
-    .toBe(true);
-  await expect(page.getByRole("link", { name: /YouTube/ })).toHaveCount(0);
-  await page.getByRole("button", { name: "Pause music" }).click();
-  await expect
-    .poll(() => song.evaluate((el: HTMLAudioElement) => el.paused))
-    .toBe(true);
-  await page.getByLabel("Music volume").fill("0.25");
-  await expect
-    .poll(() => song.evaluate((el: HTMLAudioElement) => el.volume))
-    .toBe(0.25);
-  await page.getByRole("button", { name: "Play music" }).click();
-  await expect
-    .poll(() => song.evaluate((el: HTMLAudioElement) => !el.paused))
-    .toBe(true);
-  await expect(
-    page.getByRole("link", { name: /Connect on Instagram/ }),
-  ).toHaveAttribute("href", "https://www.instagram.com/_.avalanche.who");
-  await expect(page.getByLabel("Preferred date")).toBeVisible();
-  await expect(page.getByLabel("Your email")).toBeVisible();
-
-  await page.route("**/api/plan", async (route) => {
-    expect(route.request().postDataJSON().email).toBe("guest@example.test");
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ sent: true, delivery: "local" }),
-    });
-  });
-  await page.getByLabel("Your email").fill("guest@example.test");
-  await page.getByLabel("Preferred date").fill("2026-10-10");
-  await page.getByLabel("Preferred time").fill("17:00");
-  await page.getByLabel("Area or location").fill("South Kolkata");
-  await page.getByRole("button", { name: "Review our plan" }).click();
-  await expect(
-    page.getByRole("region", { name: "Review your date plan" }),
-  ).toContainText("Nothing has been sent yet");
-  await page.getByRole("button", { name: "Send our plan" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "local development outbox",
-  );
-  await page.getByRole("button", { name: "Play again" }).click();
-  await expect
-    .poll(() => song.evaluate((el: HTMLAudioElement) => el.paused))
-    .toBe(true);
-  await expect(
-    page.getByRole("heading", { name: "Thanisha its done bro" }),
-  ).toBeVisible();
-});
-
-test("unavailable plan email shows a usable fallback before submission", async ({
-  page,
-}) => {
-  await page.route("**/api/plan/status", (route) =>
-    route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
-  );
-  await startGame(page);
-  await steer(page, "right", "right");
-  await expect(
-    page.getByText(/Plan email is unavailable right now/),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Send our plan" })).toHaveCount(
-    0,
-  );
-  await expect(
-    page.getByRole("link", { name: /Connect on Instagram/ }),
-  ).toBeVisible();
-});
-
-test("three NO catches open a fake scanner assessment with free exits", async ({
-  page,
-}) => {
-  await startGame(page);
-  await steer(page, "left", "left");
-  await expect(page.getByText("1 / 3")).toBeVisible();
-  await steer(page, "right", "up", "up");
-  await expect(page.getByText("2 / 3")).toBeVisible();
-  await expect(
-    page
-      .getByRole("status")
-      .getByRole("img", { name: "Benjamin Netanyahu reaction portrait" }),
-  ).toBeVisible();
-  await steer(page, "down", "down", "down", "down", "right", "right", "right");
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("₹500");
-  await expect(dialog).toContainText("No payment is requested or possible");
-  await expect(
-    dialog.getByRole("img", { name: /Non-scannable joke graphic/ }),
-  ).toHaveAttribute("src", "/upi-scanner-joke.jpg");
-  await expect(
-    dialog.getByRole("img", { name: "Benjamin Netanyahu reaction portrait" }),
-  ).toBeVisible();
-  await expect(page.getByText(/Certainty is a brief candle/)).toBeVisible();
-  await expect(page.locator("img[src='/images/salman-khan.jpg']")).toHaveCount(
-    0,
-  );
-  await expect(
-    page.locator("img[src='/images/gyanesh-kumar.jpg']"),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "Return to board" }).click();
-  await expect(dialog).not.toBeVisible();
-  await steer(page, "left", "left", "left", "left");
-  await expect(dialog).toBeVisible();
-  await page.getByRole("button", { name: "Exit for free" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Free to go." }),
-  ).toBeVisible();
-});
-
-test("keyboard, swipe, visible controls, and missing exact audio remain safe", async ({
-  page,
-  isMobile,
-}) => {
-  await page.route("**/audio/no_first.mp3", (route) => route.abort());
-  const warnings: string[] = [];
+test("three deliberate NO selections use original audio, and free exit works", async ({ page, request }) => {
+  for (const asset of ["no_first.mp3", "no_third_alarm.mp3", "yes_date_song.mp3"]) {
+    expect((await request.get("/audio/" + asset)).status()).toBe(200);
+  }
   await page.addInitScript(() => {
     const prior = HTMLMediaElement.prototype.play;
-    (window as unknown as { attempts: string[] }).attempts = [];
+    (window as unknown as { audioAttempts: string[] }).audioAttempts = [];
     HTMLMediaElement.prototype.play = function () {
-      (window as unknown as { attempts: string[] }).attempts.push(
-        new URL(this.src).pathname,
-      );
+      (window as unknown as { audioAttempts: string[] }).audioAttempts.push(new URL(this.src).pathname);
       return prior.call(this);
     };
   });
-  page.on("console", (message) => {
-    if (message.type() === "warning") warnings.push(message.text());
-  });
-  await startGame(page);
-  if (isMobile) {
-    const board = page.getByRole("img", { name: /Snake ballot/ });
-    const box = await board.boundingBox();
-    expect(box).toBeTruthy();
-    await page.evaluate(() => {
-      const board = document.querySelector(".ballot-board")!;
-      board.dispatchEvent(
-        new TouchEvent("touchstart", {
-          bubbles: true,
-          touches: [
-            new Touch({
-              identifier: 1,
-              target: board,
-              clientX: 200,
-              clientY: 200,
-            }),
-          ],
-        }),
-      );
-      board.dispatchEvent(
-        new TouchEvent("touchend", {
-          bubbles: true,
-          changedTouches: [
-            new Touch({
-              identifier: 1,
-              target: board,
-              clientX: 100,
-              clientY: 200,
-            }),
-          ],
-        }),
-      );
-    });
-    await steer(page, "left");
-  } else {
-    await page.keyboard.press("ArrowLeft");
-    await page.keyboard.press("a");
-  }
-  await expect(page.getByText("1 / 3")).toBeVisible();
-  const attempts = await page.evaluate(
-    () => (window as unknown as { attempts: string[] }).attempts,
-  );
-  expect(attempts).toContain("/audio/no_first.mp3");
-  expect(attempts).not.toContain("/audio/no_third_alarm.mp3");
-  await expect
-    .poll(() =>
-      warnings.some((warning) => warning.includes("/audio/no_first.mp3")),
-    )
-    .toBe(true);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  await openQuestion(page);
+  const no = page.getByRole("button", { name: "No", exact: true });
+  await no.click();
+  await expect(page.getByText("No recorded. I tested this button more than the YES button, which says more about me than I intended.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Leave this page" })).toBeVisible();
+  await no.click();
+  await expect(page.getByText("I asked the website to take this gracefully. It opened an inquiry.")).toBeVisible();
+  await no.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Nothing will be charged");
+  expect(await page.evaluate(() => (window as unknown as { audioAttempts: string[] }).audioAttempts)).toEqual([
+    "/audio/no_first.mp3", "/audio/no_first.mp3", "/audio/no_third_alarm.mp3"
+  ]);
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await no.click();
+  await page.getByRole("button", { name: "Exit for free" }).click();
+  await expect(page.getByRole("heading", { name: "All good." })).toBeVisible();
 });
 
-test("opens the snake board directly without sign-in", async ({ page }) => {
-  const authRequests: string[] = [];
-  page.on("request", (request) => {
-    if (/\/api\/(session|login|verify)/.test(request.url()))
-      authRequests.push(request.url());
-  });
-  await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Thanisha its done bro" }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Move right" })).toBeVisible();
-  await expect(page.getByLabel("Email")).toHaveCount(0);
-  expect(authRequests).toEqual([]);
-});
-
-test("failed plan keeps review and retries the same submission without extra sends", async ({
-  page,
-}) => {
-  await page.route("**/api/plan/status", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: '{"status":"ok"}',
-    }),
-  );
-  const submissions: { id: string; email: string }[] = [];
-  await page.route("**/api/plan", async (route) => {
+test("YES after NO keeps plan draft, posts guest email once after review, and retries same id", async ({ page }) => {
+  await page.route("**/api/plan/status", route => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+  const submissions: Record<string, string>[] = [];
+  await page.route("**/api/plan", async route => {
     submissions.push(route.request().postDataJSON());
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    await route.fulfill({
-      status: submissions.length === 1 ? 503 : 200,
-      contentType: "application/json",
-      body:
-        submissions.length === 1 ? "{}" : '{"sent":true,"delivery":"resend"}',
-    });
+    await route.fulfill({ status: submissions.length === 1 ? 503 : 200, contentType: "application/json", body: submissions.length === 1 ? "{}" : '{"sent":true,"delivery":"local"}' });
   });
-  await startGame(page);
-  await steer(page, "right", "right");
+  await openQuestion(page);
+  await page.getByRole("button", { name: "No", exact: true }).click();
+  await page.getByRole("button", { name: "Yes, take me out" }).click();
+  await expect(page.getByRole("heading", { name: "It’s done bro." })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pause song" })).toBeVisible();
+  await page.getByRole("button", { name: "Pause song" }).click();
+  await page.getByLabel("Your name").fill("Test Guest");
   await page.getByLabel("Your email").fill("guest@example.test");
-  await page.getByLabel("Preferred date").fill("2026-10-10");
-  await page.getByLabel("Preferred time").fill("17:00");
-  await page.getByLabel("Area or location").fill("Park");
+  await page.getByLabel("Preferred date").fill("2026-10-15");
+  await page.getByLabel("Preferred time").fill("18:00");
+  await page.getByLabel("Area or location").fill("South Kolkata");
   await page.getByRole("button", { name: "Review our plan" }).click();
   expect(submissions).toHaveLength(0);
+  await expect(page.getByRole("region", { name: "Review your date plan" })).toContainText("guest@example.test");
   await page.getByRole("button", { name: "Send our plan" }).click();
-  await expect(page.getByRole("region", { name: "Review your date plan" }).getByRole("alert")).toContainText("retry this same plan");
-  await expect(
-    page.getByRole("region", { name: "Review your date plan" }),
-  ).toContainText("guest@example.test");
+  await expect(page.locator(".form-error")).toContainText("retry this same plan");
   await page.getByRole("button", { name: "Send our plan" }).click();
-  await expect(page.getByRole("status")).toContainText("you and Spandan");
+  await expect(page.locator(".success-message")).toContainText("local development outbox");
   expect(submissions).toHaveLength(2);
   expect(submissions[0].id).toBe(submissions[1].id);
+  expect(submissions[0].name).toBe("Test Guest");
+  expect(submissions[0].email).toBe("guest@example.test");
+});
+
+test("mute persists and missing audio does not block the NO path", async ({ page }) => {
+  await page.route("**/audio/no_first.mp3", route => route.abort());
+  const warnings: string[] = [];
+  page.on("console", message => { if (message.type() === "warning") warnings.push(message.text()); });
+  await openQuestion(page);
+  await page.getByRole("button", { name: "No", exact: true }).click();
+  await expect(page.getByText(/No recorded. I tested this button/)).toBeVisible();
+  await expect.poll(() => warnings.some(w => w.includes("/audio/no_first.mp3"))).toBe(true);
+  await page.getByRole("button", { name: "Sound on" }).click();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sound off" })).toBeVisible();
+});
+
+test("YES works immediately and after dismissing the third NO assessment", async ({ page }) => {
+  await page.route("**/api/plan/status", route => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+  await openQuestion(page);
+  await page.getByRole("button", { name: "Yes, take me out" }).click();
+  await expect(page.getByRole("heading", { name: "It’s done bro." })).toBeVisible();
+  await expect(page.getByLabel("Your email")).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: /Open it/ }).click();
+  const no = page.getByRole("button", { name: "No", exact: true });
+  await no.click(); await no.click(); await no.click();
+  await page.getByRole("button", { name: "Back to the question" }).click();
+  await page.getByRole("button", { name: "Yes, take me out" }).click();
+  await expect(page.getByRole("heading", { name: "It’s done bro." })).toBeVisible();
+  expect(await page.locator("audio").evaluateAll(elements => elements.every(element => (element as HTMLAudioElement).src.includes("yes_date_song") || (element as HTMLAudioElement).paused))).toBe(true);
 });

@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "Thanisha, It’s Done Bro",
-  description: "A fictional election-office snake ballot for a date invitation.",
+  title: "One Question · A message from Spandan",
+  description: "A private date invitation from Spandan.",
 };
 export default function Layout({
   children,

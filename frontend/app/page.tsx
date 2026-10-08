@@ -2,833 +2,155 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { AudioController } from "@/lib/audio";
-import { advance, Direction, Game, newGame, SIZE } from "@/lib/game";
+import { RECIPIENT_FIRST_NAME } from "@/lib/site";
 
-type Screen = "board" | "yes" | "exit";
-type Booking = {
-  date: string;
-  time: string;
-  area: string;
-  outing: string;
-  note: string;
-};
+type Screen = "opening" | "question" | "yes" | "exit";
+type Plan = { name: string; email: string; date: string; time: string; area: string; outing: string; note: string };
+const guest = RECIPIENT_FIRST_NAME.trim();
 const YES_SONG = "/audio/yes_date_song.mp3";
 const EXIT_ALARM = "/audio/no_third_alarm.mp3";
-const INSTAGRAM_URL = "https://www.instagram.com/_.avalanche.who";
+const questions = [
+  ["Why an entire website?", "Apparently I find deploying a website less intimidating than asking you out normally."],
+  ["What’s the plan?", "Good music, somewhere we can hear each other, and a second stop only if we both want one."],
+  ["Why me?", "Because you caught my attention, and I’d rather get to know you across a table than through a screen."],
+  ["What if it’s awkward?", "We finish our coffee, part as reasonable adults, and never speak of this website again."],
+  ["What if I say no?", "Then it’s no. The website may behave badly; I won’t."],
+] as const;
 
 export default function Home() {
+  const [screen, setScreen] = useState<Screen>("opening");
+  const [noCount, setNoCount] = useState(0);
   const [muted, setMuted] = useState(false);
   const [songPlaying, setSongPlaying] = useState(false);
-  const [songVolume, setSongVolume] = useState(0.65);
-  const songRef = useRef<HTMLAudioElement>(null);
-  const [screen, setScreen] = useState<Screen>("board");
-  const [game, setGame] = useState<Game>(newGame);
-  const [recount, setRecount] = useState(false);
   const [assessment, setAssessment] = useState(false);
-  const [alarmNeedsGesture, setAlarmNeedsGesture] = useState(false);
-  const [bookingSending, setBookingSending] = useState(false);
-  const [bookingSent, setBookingSent] = useState<"local" | "resend" | null>(
-    null,
-  );
-  const [reviewingPlan, setReviewingPlan] = useState(false);
-  const [bookingError, setBookingError] = useState("");
+  const [terms, setTerms] = useState(false);
+  const [openQuestion, setOpenQuestion] = useState<number | null>(null);
   const [planAvailable, setPlanAvailable] = useState<boolean | null>(null);
-  const [booking, setBooking] = useState<Booking>({
-    date: "",
-    time: "",
-    area: "",
-    outing: "Coffee",
-    note: "",
-  });
-  const gameRef = useRef(game);
+  const [reviewing, setReviewing] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState<"local" | "resend" | null>(null);
+  const [error, setError] = useState("");
+  const [plan, setPlan] = useState<Plan>({ name: guest, email: "", date: "", time: "", area: "", outing: "Coffee", note: "" });
   const audio = useRef<AudioController | null>(null);
-  const assessmentRef = useRef<HTMLDialogElement>(null);
-  const exitAlarmRef = useRef<HTMLAudioElement>(null);
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
-  const recountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const exitAlarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const moveRef = useRef<(direction: Direction) => void>(() => {});
-  const bookingId = useRef("");
-  const bookingSendingRef = useRef(false);
+  const song = useRef<HTMLAudioElement>(null);
+  const alarm = useRef<HTMLAudioElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const alarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submissionId = useRef("");
+  const sendingRef = useRef(false);
 
+  function stopAlarm() {
+    if (alarmTimer.current) clearTimeout(alarmTimer.current);
+    if (alarm.current) { alarm.current.pause(); alarm.current.currentTime = 0; }
+  }
+  function stopAll() {
+    audio.current?.stop();
+    stopAlarm();
+    if (song.current) { song.current.pause(); song.current.currentTime = 0; }
+  }
   useEffect(() => {
     const controller = new AudioController();
     audio.current = controller;
     const preference = localStorage.getItem("bro-muted") === "true";
     setMuted(preference);
     controller.setMuted(preference);
-    const stop = () => {
-      audio.current?.stop();
-      songRef.current?.pause();
-      if (exitAlarmTimer.current) clearTimeout(exitAlarmTimer.current);
-      if (exitAlarmRef.current) {
-        exitAlarmRef.current.pause();
-        exitAlarmRef.current.currentTime = 0;
-      }
-    };
-    const visibility = () => {
-      if (document.hidden) stop();
-    };
-    window.addEventListener("pagehide", stop);
-    document.addEventListener("visibilitychange", visibility);
-    return () => {
-      stop();
-      if (recountTimer.current) clearTimeout(recountTimer.current);
-      if (exitAlarmTimer.current) clearTimeout(exitAlarmTimer.current);
-      controller.dispose();
-      window.removeEventListener("pagehide", stop);
-      document.removeEventListener("visibilitychange", visibility);
-    };
+    const onHide = () => { if (document.hidden) { controller.stop(); song.current?.pause(); alarm.current?.pause(); } };
+    const onLeave = () => { controller.stop(); song.current?.pause(); alarm.current?.pause(); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onLeave);
+    return () => { controller.dispose(); if (alarmTimer.current) clearTimeout(alarmTimer.current); alarm.current?.pause(); song.current?.pause(); document.removeEventListener("visibilitychange", onHide); window.removeEventListener("pagehide", onLeave); };
   }, []);
-
   useEffect(() => {
-    if (assessment && !assessmentRef.current?.open)
-      assessmentRef.current?.showModal();
-    if (!assessment && assessmentRef.current?.open)
-      assessmentRef.current.close();
+    if (assessment && !dialog.current?.open) dialog.current?.showModal();
+    if (!assessment && dialog.current?.open) dialog.current.close();
   }, [assessment]);
-
   useEffect(() => {
     if (screen !== "yes") return;
     const controller = new AbortController();
     fetch("/api/plan/status", { signal: controller.signal, cache: "no-store" })
-      .then((response) => setPlanAvailable(response.ok))
-      .catch(() => {
-        if (!controller.signal.aborted) setPlanAvailable(false);
-      });
+      .then(response => setPlanAvailable(response.ok))
+      .catch(() => { if (!controller.signal.aborted) setPlanAvailable(false); });
     return () => controller.abort();
   }, [screen]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const direction: Record<string, Direction> = {
-        arrowup: "up",
-        w: "up",
-        arrowdown: "down",
-        s: "down",
-        arrowleft: "left",
-        a: "left",
-        arrowright: "right",
-        d: "right",
-      };
-      const target = event.target as HTMLElement;
-      if (target.closest("input, textarea, select, dialog")) return;
-      const chosen = direction[event.key.toLowerCase()];
-      if (chosen) {
-        event.preventDefault();
-        moveRef.current(chosen);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   function toggleSound() {
     const next = !muted;
     setMuted(next);
-    audio.current?.setMuted(next);
-    if (next) songRef.current?.pause();
-    if (next && exitAlarmRef.current) {
-      exitAlarmRef.current.pause();
-      exitAlarmRef.current.currentTime = 0;
-    }
     localStorage.setItem("bro-muted", String(next));
+    audio.current?.setMuted(next);
+    if (next) { song.current?.pause(); stopAlarm(); }
   }
-
-  function restartGame() {
-    audio.current?.stop();
-    if (songRef.current) {
-      songRef.current.pause();
-      songRef.current.currentTime = 0;
-    }
-    setScreen("board");
-    const fresh = newGame();
-    gameRef.current = fresh;
-    setGame(fresh);
-    setRecount(false);
-    setAssessment(false);
-    bookingId.current = "";
-    setBookingSent(null);
-    setBookingError("");
-  }
-
-  function closeAssessment() {
-    audio.current?.stop();
-    if (exitAlarmTimer.current) clearTimeout(exitAlarmTimer.current);
-    if (exitAlarmRef.current) {
-      exitAlarmRef.current.pause();
-      exitAlarmRef.current.currentTime = 0;
-    }
-    setAssessment(false);
-    setAlarmNeedsGesture(false);
-  }
-
-  function exitForFree() {
-    closeAssessment();
-    setScreen("exit");
-  }
-
-  function playAssessmentAlarm() {
-    const alarm = exitAlarmRef.current;
-    if (!alarm) return;
-    if (muted) {
-      setMuted(false);
-      audio.current?.setMuted(false);
-      localStorage.setItem("bro-muted", "false");
-    }
-    if (exitAlarmTimer.current) clearTimeout(exitAlarmTimer.current);
-    alarm.pause();
-    alarm.currentTime = 0;
-    alarm.volume = 1;
-    setAlarmNeedsGesture(false);
-    void alarm
-      .play()
-      .then(() => {
-        exitAlarmTimer.current = setTimeout(() => {
-          alarm.pause();
-          alarm.currentTime = 0;
-        }, 3500);
-      })
-      .catch(() => {
-        setAlarmNeedsGesture(true);
-        console.warn("Browser blocked exit alarm playback: " + EXIT_ALARM);
-      });
-  }
-
-  function startAssessment() {
-    setAssessment(true);
-    playAssessmentAlarm();
-  }
-
   function playSong() {
-    const song = songRef.current;
-    if (!song || muted) return;
+    if (!song.current || muted) return;
     audio.current?.stop();
-    song.volume = songVolume;
-    void song.play().catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      console.warn(
-        error instanceof DOMException && error.name === "NotAllowedError"
-          ? "Browser blocked YES music; use Play music."
-          : "Missing or unreadable YES music: " + YES_SONG,
-      );
+    void song.current.play().catch((reason: unknown) => {
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      console.warn("Missing or unreadable YES music: " + YES_SONG);
     });
   }
-
-  function move(direction: Direction) {
-    if (screen !== "board" || assessment) return;
-    const result = advance(gameRef.current, direction);
-    if (result.game === gameRef.current) return;
-    gameRef.current = result.game;
-    setGame(result.game);
-    if (result.catch === "yes") {
-      audio.current?.stop();
-      setPlanAvailable(null);
-      playSong();
-      setScreen("yes");
-    } else if (result.catch === "no") {
-      if (result.game.noCount < 3) {
-        void audio.current?.play("no_first");
-        setRecount(true);
-        if (recountTimer.current) clearTimeout(recountTimer.current);
-        recountTimer.current = setTimeout(() => setRecount(false), 850);
-      } else {
-        audio.current?.stop();
-        startAssessment();
-      }
-    }
+  function chooseYes() {
+    stopAll();
+    setAssessment(false);
+    setPlanAvailable(null);
+    setScreen("yes");
+    playSong();
   }
-  moveRef.current = move;
-
-  const snakeTrail = [...game.snake].reverse();
-  const snakePath = snakeTrail
-    .map(
-      (point, index) =>
-        `${index === 0 ? "M" : "L"} ${point.x * 100 + 50} ${point.y * 100 + 50}`,
-    )
-    .join(" ");
-  const tail = snakeTrail[0];
-  const tailNext = snakeTrail[1] ?? tail;
-  let tailDx = Math.sign(tail.x - tailNext.x);
-  let tailDy = Math.sign(tail.y - tailNext.y);
-  if (tailDx === 0 && tailDy === 0) tailDy = 1;
-  const tailPx = -tailDy;
-  const tailPy = tailDx;
-  const tailX = tail.x * 100 + 50;
-  const tailY = tail.y * 100 + 50;
-  const tailPath = `M ${tailX + tailDx * 36} ${tailY + tailDy * 36} L ${tailX + tailPx * 14} ${tailY + tailPy * 14} L ${tailX - tailPx * 14} ${tailY - tailPy * 14} Z`;
-  const snakeHead = game.snake[0];
-  const snakeNeck = game.snake[1] ?? snakeHead;
-  const facingAngle =
-    snakeHead.x > snakeNeck.x
-      ? 0
-      : snakeHead.y > snakeNeck.y
-        ? 90
-        : snakeHead.x < snakeNeck.x
-          ? 180
-          : 270;
-  const headX = snakeHead.x * 100 + 50;
-  const headY = snakeHead.y * 100 + 50;
-
-  function updateBooking(update: Partial<Booking>) {
-    setBooking((current) => ({ ...current, ...update }));
-    bookingId.current = crypto.randomUUID();
-    setBookingSent(null);
-    setReviewingPlan(false);
-    setBookingError("");
+  function chooseNo() {
+    stopAll();
+    const next = Math.min(noCount + 1, 3);
+    setNoCount(next);
+    if (next < 3) { void audio.current?.play("no_first"); return; }
+    setAssessment(true);
+    if (muted || !alarm.current) return;
+    void alarm.current.play().then(() => {
+      alarmTimer.current = setTimeout(stopAlarm, 3500);
+    }).catch(() => console.warn("Missing or unreadable exit alarm: " + EXIT_ALARM));
   }
-
-  function reviewBooking(event: FormEvent<HTMLFormElement>) {
+  function closeAssessment() { stopAlarm(); setAssessment(false); }
+  function leave() { stopAll(); setAssessment(false); setScreen("exit"); }
+  function updatePlan(update: Partial<Plan>) {
+    setPlan(current => ({ ...current, ...update }));
+    submissionId.current = "";
+    setSent(null); setReviewing(false); setError("");
+  }
+  function reviewPlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!bookingId.current) bookingId.current = crypto.randomUUID();
-    setBookingError("");
-    setReviewingPlan(true);
+    if (!submissionId.current) submissionId.current = crypto.randomUUID();
+    setError(""); setReviewing(true);
   }
-
   async function submitPlan() {
-    if (bookingSendingRef.current || bookingSent || !reviewingPlan) return;
-    bookingSendingRef.current = true;
-    setBookingSending(true);
-    setBookingError("");
-    if (!bookingId.current) bookingId.current = crypto.randomUUID();
+    if (sendingRef.current || sent || !reviewing) return;
+    sendingRef.current = true; setSending(true); setError("");
     try {
       const response = await fetch("/api/plan", {
-        method: "POST",
-        credentials: "same-origin",
+        method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: bookingId.current,
-          when: `${booking.date} at ${booking.time}`,
-          area: booking.area,
-          outing: booking.outing,
-          note: booking.note,
-        }),
+        body: JSON.stringify({ id: submissionId.current, name: plan.name, email: plan.email, when: plan.date + " at " + plan.time, area: plan.area, outing: plan.outing, note: plan.note }),
       });
       if (!response.ok) {
-        setBookingError(
-          response.status === 503
-            ? "Plan email is unavailable right now. Nothing was sent. Your draft is still here; you can use the Instagram link above."
-            : response.status === 429
-              ? "The plan email limit has been reached for today. Nothing was sent; your draft is still here."
-              : "The plan could not be sent. Nothing was sent; your draft is still here.",
-        );
+        setError(response.status === 429 ? "The plan limit has been reached for today. Your draft is still here." : response.status === 409 ? "This plan needs a manual delivery check. Please contact Spandan before sending another copy." : "Plan delivery was not confirmed. Your draft is still here; retry this same plan.");
         return;
       }
       const result: { delivery?: "local" | "resend" } = await response.json();
-      if (result.delivery !== "local" && result.delivery !== "resend")
-        throw new Error();
-      setBookingSent(result.delivery);
+      if (result.delivery !== "local" && result.delivery !== "resend") throw new Error("Unexpected delivery result");
+      setSent(result.delivery);
     } catch {
-      setBookingError(
-        "Could not reach plan email right now. Nothing was sent; your draft is still here. You can use the Instagram link above.",
-      );
-    } finally {
-      bookingSendingRef.current = false;
-      setBookingSending(false);
-    }
+      setError("Plan delivery was not confirmed. Your draft is still here; retry this same plan.");
+    } finally { sendingRef.current = false; setSending(false); }
   }
 
-  return (
-    <div className="shell">
-      <header className="masthead">
-        <div className="brand">
-          <span className="brand-mark">✓</span>
-          <span>
-            THANISHA, IT’S DONE BRO
-            <small>FICTIONAL ELECTION OFFICE · FILE 001</small>
-          </span>
-        </div>
-        <div className="header-actions">
-          <button
-            className="plain-button"
-            onClick={toggleSound}
-            aria-pressed={muted}
-          >
-            {muted ? "Sound off" : "Sound on"}
-          </button>
-        </div>
-      </header>
-
-      {screen === "board" ? (
-        <main
-          className={"card arcade " + (game.noCount >= 2 ? "escalated" : "")}
-        >
-          <div className="arcade-heading">
-            <div>
-              <span className="eyebrow">BALLOT 01 · THE GREAT NO CHASE</span>
-              <h1>Thanisha its done bro</h1>
-              <p>Steer the snake toward your answer.</p>
-              <aside className="official-notice">
-                <span>OFFICIAL FOOTNOTE</span>
-                <p>Certainty is a brief candle; the paperwork has tenure.</p>
-              </aside>
-            </div>
-            <div className="count-card">
-              <span>NO RECOUNTS</span>
-              <strong>{game.noCount} / 3</strong>
-              <small className="doom-note">PAPERWORK IS IMMORTAL</small>
-            </div>
-          </div>
-          <div className={"game-wrap " + (recount ? "recount" : "")}>
-            <div
-              className="ballot-board"
-              role="img"
-              aria-label={`Snake ballot. YES at column ${game.yes.x + 1}, row ${game.yes.y + 1}; NO at column ${game.no.x + 1}, row ${game.no.y + 1}. Snake at column ${game.snake[0].x + 1}, row ${game.snake[0].y + 1}.`}
-              onTouchStart={(event) => {
-                touchStart.current = {
-                  x: event.touches[0].clientX,
-                  y: event.touches[0].clientY,
-                };
-              }}
-              onTouchEnd={(event) => {
-                if (!touchStart.current) return;
-                const dx =
-                  event.changedTouches[0].clientX - touchStart.current.x;
-                const dy =
-                  event.changedTouches[0].clientY - touchStart.current.y;
-                touchStart.current = null;
-                if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;
-                move(
-                  Math.abs(dx) > Math.abs(dy)
-                    ? dx > 0
-                      ? "right"
-                      : "left"
-                    : dy > 0
-                      ? "down"
-                      : "up",
-                );
-              }}
-            >
-              {Array.from({ length: SIZE * SIZE }, (_, index) => {
-                const x = index % SIZE,
-                  y = Math.floor(index / SIZE);
-                const head = game.snake[0].x === x && game.snake[0].y === y;
-                const body = game.snake
-                  .slice(1)
-                  .some((point) => point.x === x && point.y === y);
-                const yes = game.yes.x === x && game.yes.y === y;
-                const no = game.no.x === x && game.no.y === y;
-                return (
-                  <div
-                    key={index}
-                    className={[
-                      "square",
-                      head && "head",
-                      body && "body",
-                      yes && "yes-tile",
-                      no && "no-tile",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    data-cell={`${x},${y}`}
-                  >
-                    {yes ? "YES" : no ? "NO" : null}
-                  </div>
-                );
-              })}
-              <svg
-                className="snake-art"
-                viewBox="0 0 700 700"
-                aria-hidden="true"
-              >
-                <defs>
-                  <linearGradient id="snake-skin" x1="0" y1="0" x2="0.8" y2="1">
-                    <stop offset="0" stopColor="#8bcf76" />
-                    <stop offset="0.48" stopColor="#39a36b" />
-                    <stop offset="1" stopColor="#17634f" />
-                  </linearGradient>
-                  <radialGradient id="snake-face" cx="0.32" cy="0.25" r="0.9">
-                    <stop offset="0" stopColor="#a6e17b" />
-                    <stop offset="0.52" stopColor="#52bd70" />
-                    <stop offset="1" stopColor="#187257" />
-                  </radialGradient>
-                </defs>
-                <path className="snake-tail" d={tailPath} />
-                <path className="snake-outline" d={snakePath} />
-                <path className="snake-body-path" d={snakePath} />
-                {snakeTrail.slice(1, -1).map((point, index) => {
-                  const x = point.x * 100 + 50;
-                  const y = point.y * 100 + 50;
-                  return (
-                    <g
-                      className="snake-scales"
-                      key={`${point.x},${point.y}-${index}`}
-                    >
-                      <ellipse cx={x - 13} cy={y - 9} rx="6" ry="4" />
-                      <ellipse cx={x + 13} cy={y + 9} rx="6" ry="4" />
-                    </g>
-                  );
-                })}
-                <g
-                  className="snake-head-art"
-                  transform={`translate(${headX} ${headY}) rotate(${facingAngle})`}
-                >
-                  <ellipse
-                    className="snake-face"
-                    cx="0"
-                    cy="0"
-                    rx="37"
-                    ry="31"
-                  />
-                  <ellipse
-                    className="snake-eye-white"
-                    cx="14"
-                    cy="-13"
-                    rx="7.5"
-                    ry="7"
-                  />
-                  <ellipse
-                    className="snake-eye-white"
-                    cx="14"
-                    cy="13"
-                    rx="7.5"
-                    ry="7"
-                  />
-                  <ellipse
-                    className="snake-pupil"
-                    cx="17"
-                    cy="-13"
-                    rx="3"
-                    ry="4"
-                  />
-                  <ellipse
-                    className="snake-pupil"
-                    cx="17"
-                    cy="13"
-                    rx="3"
-                    ry="4"
-                  />
-                  <circle className="snake-nostril" cx="30" cy="-5" r="2" />
-                  <circle className="snake-nostril" cx="30" cy="5" r="2" />
-                  <path
-                    className="snake-tongue"
-                    d="M 34 0 L 48 0 M 48 0 L 56 -6 M 48 0 L 56 6"
-                  />
-                </g>
-              </svg>
-            </div>
-            {recount && (
-              <div className="recount-stamp" role="status">
-                <img
-                  src="/images/netanyahu.jpg"
-                  alt="Benjamin Netanyahu reaction portrait"
-                />
-                <strong>RECOUNT!</strong>
-                <small>NO relocated by committee</small>
-              </div>
-            )}
-          </div>
-          <div className="control-row">
-            <p>Arrow keys / WASD · Swipe the board · Or tap a direction</p>
-            <div
-              className="direction-pad"
-              aria-label="Snake direction controls"
-            >
-              <button aria-label="Move up" onClick={() => move("up")}>
-                ↑
-              </button>
-              <button aria-label="Move left" onClick={() => move("left")}>
-                ←
-              </button>
-              <button aria-label="Move down" onClick={() => move("down")}>
-                ↓
-              </button>
-              <button aria-label="Move right" onClick={() => move("right")}>
-                →
-              </button>
-            </div>
-          </div>
-          <p className="board-note">
-            No walls, no elimination. The fictional office insists your choice
-            remains yours.
-          </p>
-        </main>
-      ) : screen === "yes" ? (
-        <main className="card result">
-          <div className="confetti" aria-hidden="true">
-            {Array.from({ length: 20 }, (_, index) => (
-              <i
-                key={index}
-                style={{
-                  left: `${(index * 37) % 100}%`,
-                  animationDelay: `${(index % 6) * 0.1}s`,
-                }}
-              />
-            ))}
-          </div>
-          <span className="eyebrow">BALLOT COUNTED · DATE ACCEPTED</span>
-          <div className="result-heart" aria-hidden="true">
-            ♡
-          </div>
-          <h1>
-            It’s done <em>bro.</em>
-          </h1>
-          <p>You caught YES. The committee is delighted.</p>
-          <div className="song-box">
-            <p>Your YES song</p>
-            <button
-              className="action-button"
-              onClick={() =>
-                songPlaying ? songRef.current?.pause() : playSong()
-              }
-              disabled={muted}
-            >
-              {songPlaying ? "Pause music" : "Play music"}
-            </button>
-            <label htmlFor="song-volume">Music volume</label>
-            <input
-              id="song-volume"
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={songVolume}
-              onChange={(event) => {
-                const volume = Number(event.target.value);
-                setSongVolume(volume);
-                if (songRef.current) songRef.current.volume = volume;
-              }}
-            />
-            {muted && <small>Turn sound on to play music.</small>}
-          </div>
-          <a
-            className="action-button instagram-link"
-            href={INSTAGRAM_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Connect on Instagram to plan a date ↗
-          </a>
-          <section className="plan-panel" aria-labelledby="booking-title">
-            <h2 id="booking-title">Request a date</h2>
-            {planAvailable === null ? (
-              <p role="status">Checking plan email…</p>
-            ) : !planAvailable ? (
-              <p role="status">
-                Plan email is unavailable right now. Nothing can be sent from
-                this form; you can use the Instagram link above to plan
-                together.
-              </p>
-            ) : bookingSent ? (
-              <p className="booking-success" role="status">
-                {bookingSent === "local"
-                  ? "Saved in the local development outbox; no email has been sent."
-                  : "Your plan email was accepted for delivery to Spandan. This is not a confirmed calendar booking."}
-              </p>
-            ) : reviewingPlan ? (
-              <section
-                className="plan-review"
-                aria-label="Review your date plan"
-              >
-                <p>Hi Thanisha — here’s the plan for review:</p>
-                <dl>
-                  <dt>Preferred date and time</dt>
-                  <dd>
-                    {booking.date} · {booking.time}
-                  </dd>
-                  <dt>Area or location</dt>
-                  <dd>{booking.area}</dd>
-                  <dt>Outing</dt>
-                  <dd>{booking.outing}</dd>
-                  <dt>Note</dt>
-                  <dd>{booking.note || "None"}</dd>
-                </dl>
-                <p className="booking-disclaimer">
-                  When you press Send our plan, it will go to Spandan. Nothing
-                  has been sent yet.
-                </p>
-                <div className="overlay-actions">
-                  <button
-                    className="secondary-button"
-                    onClick={() => setReviewingPlan(false)}
-                  >
-                    Edit plan
-                  </button>
-                  <button
-                    className="action-button"
-                    disabled={bookingSending}
-                    onClick={submitPlan}
-                  >
-                    {bookingSending ? "Sending plan…" : "Send our plan"}
-                  </button>
-                </div>
-                {bookingError && (
-                  <p className="error" role="alert">
-                    {bookingError}
-                  </p>
-                )}
-              </section>
-            ) : (
-              <form onSubmit={reviewBooking}>
-                <div className="booking-row">
-                  <div>
-                    <label htmlFor="booking-date">Preferred date</label>
-                    <input
-                      id="booking-date"
-                      type="date"
-                      required
-                      value={booking.date}
-                      onChange={(event) =>
-                        updateBooking({ date: event.target.value })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="booking-time">Preferred time</label>
-                    <input
-                      id="booking-time"
-                      type="time"
-                      required
-                      value={booking.time}
-                      onChange={(event) =>
-                        updateBooking({ time: event.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-                <label htmlFor="booking-area">Area or location</label>
-                <input
-                  id="booking-area"
-                  maxLength={100}
-                  required
-                  value={booking.area}
-                  onChange={(event) =>
-                    updateBooking({ area: event.target.value })
-                  }
-                />
-                <label htmlFor="booking-outing">Type of outing</label>
-                <select
-                  id="booking-outing"
-                  value={booking.outing}
-                  onChange={(event) =>
-                    updateBooking({ outing: event.target.value })
-                  }
-                >
-                  <option>Coffee</option>
-                  <option>Walk</option>
-                  <option>Dinner</option>
-                  <option>Something else</option>
-                </select>
-                <label htmlFor="booking-note">Note (optional)</label>
-                <textarea
-                  id="booking-note"
-                  maxLength={500}
-                  value={booking.note}
-                  onChange={(event) =>
-                    updateBooking({ note: event.target.value })
-                  }
-                />
-                <p className="booking-disclaimer">
-                  Your plan goes to Spandan only after you review and send it.
-                  This is a date request, not a confirmed booking.
-                </p>
-                <button className="action-button">Review our plan</button>
-              </form>
-            )}
-          </section>
-          <button className="secondary-button" onClick={restartGame}>
-            Play again
-          </button>
-        </main>
-      ) : (
-        <main className="card result">
-          <span className="eyebrow">FILE CLOSED · ₹0 CHARGED</span>
-          <h1>Free to go.</h1>
-          <p>The ballot box remains open if you change your mind.</p>
-          <button
-            className="secondary-button"
-            onClick={() => {
-              if (exitAlarmTimer.current) clearTimeout(exitAlarmTimer.current);
-              if (exitAlarmRef.current) {
-                exitAlarmRef.current.pause();
-                exitAlarmRef.current.currentTime = 0;
-              }
-              setScreen("board");
-            }}
-          >
-            Return to the board
-          </button>
-        </main>
-      )}
-
-      <audio
-        ref={songRef}
-        src={YES_SONG}
-        preload="none"
-        muted={muted}
-        onPlay={() => setSongPlaying(true)}
-        onPause={() => setSongPlaying(false)}
-        onEnded={() => setSongPlaying(false)}
-        onError={() =>
-          console.warn("Missing or unreadable YES music: " + YES_SONG)
-        }
-      />
-      <footer className="footer">
-        A FICTIONAL ELECTION OFFICE · NO GOVERNMENT SERVICE · NO PAYMENT
-        REQUIRED
-      </footer>
-      <audio
-        ref={exitAlarmRef}
-        src={EXIT_ALARM}
-        preload="none"
-        onError={() =>
-          console.warn("Missing or unreadable exit alarm: " + EXIT_ALARM)
-        }
-      />
-      <dialog
-        ref={assessmentRef}
-        className="assessment"
-        aria-labelledby="assessment-title"
-        onCancel={(event) => {
-          event.preventDefault();
-          closeAssessment();
-        }}
-      >
-        <span className="eyebrow">THIRD NO · EMERGENCY RECOUNT</span>
-        <h2 id="assessment-title">
-          THE ₹500
-          <br />
-          ASSESSMENT
-        </h2>
-        <p>
-          The fictional office has produced its most ridiculous form: a fake
-          ₹500 UPI assessment. No payment is requested or possible.
-        </p>
-        <figure className="no-reaction-card">
-          <img
-            src="/images/netanyahu.jpg"
-            alt="Benjamin Netanyahu reaction portrait"
-          />
-          <figcaption>NO FILED · REACTION DESK</figcaption>
-        </figure>
-        <div className="scanner-stage scanner-flash">
-          <img
-            className="scanner-image"
-            src="/upi-scanner-joke.jpg"
-            alt="Non-scannable joke graphic marked zero rupees and nothing charged"
-          />
-        </div>
-        <p className="payment-disclaimer">
-          Nothing is charged. The vault alarm plays briefly; Exit for free is
-          always available.
-        </p>
-        {alarmNeedsGesture && (
-          <button className="secondary-button" onClick={playAssessmentAlarm}>
-            Play the alarm
-          </button>
-        )}
-        <div className="overlay-actions">
-          <button className="action-button" autoFocus onClick={exitForFree}>
-            Exit for free
-          </button>
-          <button className="secondary-button" onClick={closeAssessment}>
-            Return to board
-          </button>
-        </div>
-        <p className="fine-print">
-          Escape closes this screen. Your browser remains yours.
-        </p>
-      </dialog>
-    </div>
-  );
+  return <div className="shell">
+    <header className="topbar"><span className="wordmark">A message from Spandan<span className="accent">.</span></span><button className="sound-button" onClick={toggleSound} aria-pressed={muted}>{muted ? "Sound off" : "Sound on"}</button></header>
+    {screen === "opening" && <main className="opening" aria-labelledby="opening-title"><div className="opening-content"><span className="kicker">ONE QUESTION <span className="line" /></span><h1 id="opening-title">{guest ? "For " + guest + "." : "For you."}</h1><p>A message from Spandan.</p><button className="primary-button open-button" onClick={() => setScreen("question")}>Open it <span aria-hidden="true">↗</span></button></div><p className="opening-foot">Just between us.</p></main>}
+    {screen === "question" && <main className="conversation" aria-labelledby="invitation-title"><span className="kicker">ONE QUESTION / FROM SPANDAN</span><h1 id="invitation-title" className="message-title">{guest ? "Hey " + guest + "." : "Hey."}</h1><p className="invitation">I’ve wanted to ask you this properly: I’d like to take you out—somewhere we can talk and see where the evening goes. <strong>Would you go on a date with me?</strong></p><div className="signature">— Spandan</div>
+      <section className="questions" aria-labelledby="questions-title"><h2 id="questions-title">Questions before you answer?</h2><p className="section-hint">Pick any. Or skip straight to your answer.</p><div className="question-list">{questions.map(([question, answer], index) => <div className="question-item" key={question}><button className="question-button" aria-expanded={openQuestion === index} aria-controls={"answer-" + index} onClick={() => setOpenQuestion(openQuestion === index ? null : index)}><span>{question}</span><span aria-hidden="true">{openQuestion === index ? "−" : "+"}</span></button><div id={"answer-" + index} hidden={openQuestion !== index} className="answer">{answer}<small>Spandan</small></div></div>)}</div><button className="terms-link" onClick={() => setTerms(!terms)} aria-expanded={terms}>Terms and conditions</button>{terms && <p className="terms-copy">One date. No compulsory sequel.</p>}</section>
+      <section className="decision" aria-label="Your answer"><p>Your answer, whenever you’re ready.</p><div className="decision-buttons"><button className="primary-button" onClick={chooseYes}>Yes, take me out <span aria-hidden="true">↗</span></button><button className="no-button" onClick={chooseNo}>No</button></div>{noCount > 0 && <div className="no-response" role="status"><span className="kicker">NO RECORDED · {noCount} / 3</span><p>{noCount === 1 ? "No recorded. I tested this button more than the YES button, which says more about me than I intended." : noCount === 2 ? "I asked the website to take this gracefully. It opened an inquiry." : "Your answer is still no. You can leave for free."}</p><button className="text-button" onClick={leave}>Leave this page</button><span className="gentle-note">The No button only repeats the joke if you choose it again.</span></div>}</section></main>}
+    {screen === "yes" && <main className="success" aria-labelledby="success-title"><div className="confetti" aria-hidden="true">{Array.from({ length: 14 }, (_, i) => <i key={i} style={{ left: ((i * 37) % 97) + "%", animationDelay: ((i % 5) * .12) + "s" }} />)}</div><span className="kicker">YES / RECEIVED</span><p className="success-lead">Excellent. The website worked. Now I have to.</p><h1 id="success-title">It’s done bro<span className="accent">.</span></h1><p className="success-subtitle">I’d really like to make this worth your time.</p><div className="music-row"><span>Your YES song</span><button className="text-button" disabled={muted} onClick={() => songPlaying ? song.current?.pause() : playSong()}>{songPlaying ? "Pause song" : "Play song"}</button></div>
+      <section className="plan-panel" aria-labelledby="plan-title"><span className="kicker">THE NEXT PART</span><h2 id="plan-title">A plan we can actually make.</h2><p>Pick what sounds good. This is a proposal, not a confirmed booking.</p>{planAvailable === null ? <p role="status">Checking plan delivery…</p> : !planAvailable ? <p role="status">Plan delivery is unavailable right now. Please try again later.</p> : sent ? <p className="success-message" role="status">{sent === "local" ? "Saved to the local development outbox. No email was sent." : "Your proposed plan was accepted for email delivery to you and Spandan."}</p> : reviewing ? <section className="plan-review" aria-label="Review your date plan"><h3>Review your plan</h3><dl><dt>Name</dt><dd>{plan.name}</dd><dt>Email</dt><dd>{plan.email}</dd><dt>Preferred day and time</dt><dd>{plan.date} · {plan.time}</dd><dt>Area</dt><dd>{plan.area}</dd><dt>Type of date</dt><dd>{plan.outing}</dd><dt>Note</dt><dd>{plan.note || "None"}</dd></dl><p>Nothing has been sent yet. Send our plan emails this proposal to you and Spandan.</p><div className="form-actions"><button className="secondary-button" onClick={() => setReviewing(false)}>Edit plan</button><button className="primary-button" disabled={sending} onClick={submitPlan}>{sending ? "Sending…" : "Send our plan"}</button></div>{error && <p className="form-error" role="alert">{error}</p>}</section> : <form onSubmit={reviewPlan}><div className="field-pair"><label>Your name<input required maxLength={80} autoComplete="name" value={plan.name} onChange={e => updatePlan({ name: e.target.value })} /></label><label>Your email<input required type="email" maxLength={254} autoComplete="email" value={plan.email} onChange={e => updatePlan({ email: e.target.value })} /></label></div><div className="field-pair"><label>Preferred date<input required type="date" value={plan.date} onChange={e => updatePlan({ date: e.target.value })} /></label><label>Preferred time<input required type="time" value={plan.time} onChange={e => updatePlan({ time: e.target.value })} /></label></div><label>Area or location<input required maxLength={100} value={plan.area} onChange={e => updatePlan({ area: e.target.value })} /></label><label>Type of date<select value={plan.outing} onChange={e => updatePlan({ outing: e.target.value })}><option>Coffee</option><option>Dinner</option><option>Walk and a drink</option><option>Something else</option></select></label><label>Note (optional)<textarea maxLength={500} rows={3} value={plan.note} onChange={e => updatePlan({ note: e.target.value })} /></label><p className="form-note">You’ll review everything before anything is sent.</p><button className="primary-button" type="submit">Review our plan</button></form>}</section></main>}
+    {screen === "exit" && <main className="exit-screen"><span className="kicker">NO RECORDED</span><h1>All good.</h1><p>Thank you for opening it. You can close this page whenever you like.</p><button className="secondary-button" onClick={() => setScreen("question")}>Back to the question</button></main>}
+    <footer className="footer"><span>ONE QUESTION · SPANDAN</span><span>No pressure. No payment. Just a question.</span></footer>
+    <audio ref={song} src={YES_SONG} preload="none" muted={muted} onPlay={() => setSongPlaying(true)} onPause={() => setSongPlaying(false)} onEnded={() => setSongPlaying(false)} onError={() => console.warn("Missing or unreadable YES music: " + YES_SONG)} />
+    <audio ref={alarm} src={EXIT_ALARM} preload="none" muted={muted} onError={() => console.warn("Missing or unreadable exit alarm: " + EXIT_ALARM)} />
+    <dialog ref={dialog} className="assessment" aria-labelledby="assessment-title" onCancel={event => { event.preventDefault(); closeAssessment(); }}><span className="kicker">THIRD NO / AN ENTIRELY UNNECESSARY ESCALATION</span><h2 id="assessment-title">EXIT ASSESSMENT: ₹500</h2><p>This is a joke. Nothing will be charged.</p><div className="scanner"><img src="/upi-scanner-joke.jpg" alt="Non-scannable joke graphic. No payment possible." /></div><p className="assessment-note">No payment link, no working QR, no actual assessment.</p><div className="form-actions"><button className="primary-button" autoFocus onClick={leave}>Exit for free</button><button className="secondary-button" onClick={closeAssessment}>Back to the question</button></div><small>Escape closes this screen.</small></dialog>
+  </div>;
 }

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: thanisha-its-done-bro
+    name: its-done-bro
     runtime: docker
     plan: free
     dockerContext: .

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1100" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="base" x2="1" y2="1"><stop stop-color="#777b7d"/><stop offset=".32" stop-color="#282c2e"/><stop offset=".68" stop-color="#686a6a"/><stop offset="1" stop-color="#1c1e21"/></linearGradient>
+    <linearGradient id="ridge" x1="0" y1="0" x2="1" y2=".65"><stop stop-color="#d7d5d0"/><stop offset=".25" stop-color="#696b6c"/><stop offset=".55" stop-color="#1a1d1e"/><stop offset=".82" stop-color="#a1a29f"/><stop offset="1" stop-color="#303233"/></linearGradient>
+    <filter id="rock" x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency=".012 .036" numOctaves="3" seed="9" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="75" xChannelSelector="R" yChannelSelector="G"/></filter>
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".5" numOctaves="3" seed="3" stitchTiles="stitch"/></filter>
+  </defs>
+  <rect width="1440" height="1100" fill="url(#base)"/>
+  <g filter="url(#rock)" opacity=".88">
+    <path d="M-80 50 Q300 -120 560 115 T1530 10 L1500 350 Q1120 270 770 330 T-100 325Z" fill="url(#ridge)"/>
+    <path d="M-80 345 Q260 400 630 255 T1530 370 L1510 715 Q990 590 690 720 T-100 640Z" fill="#16191a" opacity=".8"/>
+    <path d="M-100 490 Q210 270 490 525 T1500 445 L1510 600 Q1000 420 680 650 T-100 630Z" fill="url(#ridge)" opacity=".68"/>
+    <path d="M-100 730 Q270 520 565 760 T1510 690 L1510 1100 H-100Z" fill="url(#ridge)" opacity=".7"/>
+  </g>
+  <g fill="none" stroke="#ecebe4" stroke-opacity=".14" stroke-width="2" filter="url(#rock)">
+    <path d="M-80 125 Q310 -80 610 180 T1520 100"/><path d="M-80 151 Q310 -54 610 206 T1520 126"/><path d="M-80 177 Q310 -28 610 232 T1520 152"/>
+    <path d="M-60 481 Q360 310 700 525 T1500 420"/><path d="M-60 505 Q360 334 700 549 T1500 444"/><path d="M-60 529 Q360 358 700 573 T1500 468"/>
+    <path d="M-70 800 Q310 600 675 835 T1500 710"/><path d="M-70 826 Q310 626 675 861 T1500 736"/><path d="M-70 852 Q310 652 675 887 T1500 762"/>
+  </g>
+  <rect width="1440" height="1100" filter="url(#grain)" opacity=".11"/>
+</svg>
